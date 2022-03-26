@@ -17,7 +17,14 @@ pub struct VulkanTempleRayTracedRenderer {
 
 impl VulkanTempleRayTracedRenderer {
     pub fn new(window_size: (u32, u32), window_handle: raw_window_handle::RawWindowHandle) -> Self {
-        let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder().build();
+        let mut physical_device_ray_tracing_pipeline =
+            vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(true);
+        let mut physical_device_acceleration_structure =
+            vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
+                .acceleration_structure(true);
+        let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut physical_device_acceleration_structure)
+            .push_next((&mut physical_device_ray_tracing_pipeline));
 
         let bvk = base_vk::Base::new(
             "VulkanTempleRayTracedRenderer",

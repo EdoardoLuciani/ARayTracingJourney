@@ -44,6 +44,18 @@ pub unsafe fn clone_vk_physical_device_features2_structure(
                 vk::StructureType::PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES,
                 vk::PhysicalDeviceImagelessFramebufferFeatures
             ),
+            vk::StructureType::PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR => {
+                allocate_struct!(
+                    vk::StructureType::PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR,
+                    vk::PhysicalDeviceAccelerationStructureFeaturesKHR
+                )
+            }
+            vk::StructureType::PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR => {
+                allocate_struct!(
+                    vk::StructureType::PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR,
+                    vk::PhysicalDeviceRayTracingPipelineFeaturesKHR
+                )
+            }
             _ => {
                 panic!("Found unrecognized struct inside clone_vkPhysicalDeviceFeatures2")
             }
@@ -85,6 +97,8 @@ pub unsafe fn destroy_vk_physical_device_features2(source: &mut vk::PhysicalDevi
             PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT => vk::PhysicalDeviceDescriptorIndexingFeaturesEXT,
             PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR => vk::PhysicalDeviceSynchronization2FeaturesKHR,
             PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES => vk::PhysicalDeviceImagelessFramebufferFeatures,
+            PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR => vk::PhysicalDeviceAccelerationStructureFeaturesKHR,
+            PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR => vk::PhysicalDeviceRayTracingPipelineFeaturesKHR,
         });
     }
     source.p_next = null_mut();
@@ -162,6 +176,20 @@ pub unsafe fn compare_vk_physical_device_features2(
                     baseline_ptr,
                     desired_ptr,
                     size_of::<vk::PhysicalDeviceImagelessFramebufferFeatures>(),
+                );
+            }
+            vk::StructureType::PHYSICAL_DEVICE_ACCELERATION_STRUCTURE_FEATURES_KHR => {
+                res = compare_device_features_structs(
+                    baseline_ptr,
+                    desired_ptr,
+                    size_of::<vk::PhysicalDeviceAccelerationStructureFeaturesKHR>(),
+                );
+            }
+            vk::StructureType::PHYSICAL_DEVICE_RAY_TRACING_PIPELINE_FEATURES_KHR => {
+                res = compare_device_features_structs(
+                    baseline_ptr,
+                    desired_ptr,
+                    size_of::<vk::PhysicalDeviceRayTracingPipelineFeaturesKHR>(),
                 );
             }
             _ => panic!("Found unrecognized struct inside compare_vk_physical_device_features2"),
