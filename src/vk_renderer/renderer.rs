@@ -24,7 +24,7 @@ impl VulkanTempleRayTracedRenderer {
                 .acceleration_structure(true);
         let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
             .push_next(&mut physical_device_acceleration_structure)
-            .push_next((&mut physical_device_ray_tracing_pipeline));
+            .push_next(&mut physical_device_ray_tracing_pipeline);
 
         let bvk = base_vk::Base::new(
             "VulkanTempleRayTracedRenderer",
@@ -38,6 +38,7 @@ impl VulkanTempleRayTracedRenderer {
             std::slice::from_ref(&(vk::QueueFlags::GRAPHICS, 1.0f32)),
             Some(window_handle),
         );
+
         VulkanTempleRayTracedRenderer { bvk }
     }
 }

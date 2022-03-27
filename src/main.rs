@@ -8,5 +8,5 @@ fn main() {
     let window_size = (800u32, 800u32);
 
     let mut window = WindowManager::new(window_size, None);
-    let mut vtrt = VulkanTempleRayTracedRenderer::new(window_size, window.get_window_handle());
+    let mut renderer = VulkanTempleRayTracedRenderer::new(window_size, window.get_window_handle());
 }
