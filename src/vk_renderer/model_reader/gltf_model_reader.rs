@@ -72,51 +72,30 @@ impl ModelReader for GltfModelReader {
                     });
 
                 let mut textures = HashMap::new();
-                let primitive_material = primitive_data.material();
-                let get_image_data_ptr = |texture: gltf::Texture| -> *const gltf::image::Data {
-                    images.get(texture.index()).unwrap()
-                };
-
                 macro_rules! check_txt_existence_and_append {
-                    ( $($texture_type:ty, $texture:expr), *) => {
+                    ( $($texture_type:expr, $texture:expr), *) => {
                         $(
                             if let Some(v) = $texture {
-                                textures.insert($texture_type, get_image_data_ptr($texture.texture()))
+                                textures.insert($texture_type, images.get(v.texture().index()).unwrap() as *const gltf::image::Data);
                             }
                         )*
                     };
                 }
-
-                if let Some(base_color) = primitive_material
-                    .pbr_metallic_roughness()
-                    .base_color_texture()
-                {
-                    textures.insert(
-                        TextureType::ALBEDO,
-                        get_image_data_ptr(base_color.texture()),
-                    );
-                }
-                if let Some(pbr_metallic_roughness) = primitive_material
-                    .pbr_metallic_roughness()
-                    .metallic_roughness_texture()
-                {
-                    textures.insert(
-                        TextureType::ORM,
-                        get_image_data_ptr(pbr_metallic_roughness.texture()),
-                    );
-                }
-                if let Some(normal_texture) = primitive_material.normal_texture() {
-                    textures.insert(
-                        TextureType::NORMAL,
-                        get_image_data_ptr(normal_texture.texture()),
-                    );
-                }
-                if let Some(emissive_texture) = primitive_material.emissive_texture() {
-                    textures.insert(
-                        TextureType::EMISSIVE,
-                        get_image_data_ptr(emissive_texture.texture()),
-                    );
-                }
+                let primitive_material = primitive_data.material();
+                check_txt_existence_and_append!(
+                    TextureType::ALBEDO,
+                    primitive_material
+                        .pbr_metallic_roughness()
+                        .base_color_texture(),
+                    TextureType::ORM,
+                    primitive_material
+                        .pbr_metallic_roughness()
+                        .metallic_roughness_texture(),
+                    TextureType::NORMAL,
+                    primitive_material.normal_texture(),
+                    TextureType::EMISSIVE,
+                    primitive_material.emissive_texture()
+                );
 
                 GltfPrimitive {
                     mesh_attributes,
