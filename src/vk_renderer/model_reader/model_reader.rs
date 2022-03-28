@@ -19,9 +19,27 @@ bitflags! {
     }
 }
 
+struct PrimitiveCopyData {
+    mesh_buffer_offset: Option<u64>,
+    mesh_size: Option<u64>,
+    single_mesh_element_size: Option<u32>,
+
+    indices_buffer_offset: Option<u64>,
+    indices_size: Option<u64>,
+    single_index_size: Option<u32>,
+
+    textures_buffer_offset: Option<u64>,
+    textures_extent: Option<(u32, u32)>,
+    textures_format: ash::vk::Format,
+    textures_count: Option<u32>,
+}
+
 pub trait ModelReader {
-    fn open(file_path: &Path) -> Self;
-    fn normalize_vectors(&mut self);
+    fn open(
+        file_path: &Path,
+        normalize_vectors: bool,
+        coerce_image_to_format: Option<ash::vk::Format>,
+    ) -> Self;
     fn copy_model_data_to_ptr(
         &self,
         mesh_attributes_types_to_copy: MeshAttributeType,

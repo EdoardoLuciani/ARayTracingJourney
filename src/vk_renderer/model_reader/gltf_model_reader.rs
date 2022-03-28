@@ -1,15 +1,11 @@
 use super::model_reader::*;
 
-use gltf::json::accessor::ComponentType;
-use gltf::{Material, Semantic};
+use gltf::{Gltf, Semantic};
 use nalgebra;
-use nalgebra::Vector3;
-use std::any::{Any, TypeId};
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::mem::size_of_val;
-use std::ops::{BitAnd, Deref, DivAssign};
+use std::ops::DivAssign;
 use std::path::Path;
 
 struct GltfPrimitiveMeshAttribute {
@@ -38,7 +34,11 @@ impl ModelReader for GltfModelReader {
     every normal has size 12
     every tangent has size 16
     every tex_coord has size 8 */
-    fn open(file_path: &Path) -> Self {
+    fn open(
+        file_path: &Path,
+        normalize_vectors: bool,
+        coerce_image_to_format: Option<ash::vk::Format>,
+    ) -> Self {
         let (document, mut buffers, images) = gltf::import(file_path)
             .expect(format!("Could not read file {:?}", file_path.as_os_str()).as_str());
         assert_eq!(document.meshes().count(), 1);
@@ -86,7 +86,8 @@ impl ModelReader for GltfModelReader {
                     ( $($texture_type:expr, $texture:expr), *) => {
                         $(
                             if let Some(v) = $texture {
-                                textures.insert($texture_type, images.get(v.texture().index()).unwrap() as *const gltf::image::Data);
+                                let texture_idx = v.texture().index();
+                                textures.insert($texture_type, images.get(texture_idx).expect(&format!("Cannot open texture idx {}", texture_idx)) as *const gltf::image::Data);
                             }
                         )*
                     };
@@ -114,13 +115,44 @@ impl ModelReader for GltfModelReader {
             })
             .collect::<Vec<GltfPrimitive>>();
 
-        let gltf_model = GltfModelReader {
+        let mut gltf_model = GltfModelReader {
             primitives,
             images,
             buffer_data: buffers.remove(0).0,
         };
+        if normalize_vectors {
+            gltf_model.normalize_vectors();
+        }
+
         gltf_model.validate_model();
         gltf_model
+    }
+
+    /* if dst_ptr is null, requested fields are validated by checking if they are available in the model,
+    if not, the function panics.
+    Return value is the size (in bytes) written if dst_ptr would not be null
+    if dst_ptr is not null a copy to dst_ptr is performed. */
+    fn copy_model_data_to_ptr(
+        &self,
+        mesh_attributes_types_to_copy: MeshAttributeType,
+        textures_to_copy: TextureType,
+        dst_ptr: *mut c_void,
+    ) -> u64 {
+        if dst_ptr.is_null() {
+            return self.validate_copy(mesh_attributes_types_to_copy, textures_to_copy);
+        }
+        0
+    }
+}
+
+impl GltfModelReader {
+    fn get_mesh_attribute_from_accessor(accessor: gltf::Accessor) -> GltfPrimitiveMeshAttribute {
+        let accessor_view = accessor.view().unwrap();
+        GltfPrimitiveMeshAttribute {
+            buffer_data_start: (accessor.offset() + accessor_view.offset()) as u64,
+            buffer_data_len: accessor_view.length() as u64,
+            element_size: accessor.size() as u32,
+        }
     }
 
     // normalize each primitive mesh individually
@@ -152,32 +184,7 @@ impl ModelReader for GltfModelReader {
         })
     }
 
-    /* if dst_ptr is null, requested fields are validated by checking if they are available in the model,
-    if not, the function panics.
-    Return value is the size (in bytes) written if dst_ptr would not be null
-    if dst_ptr is not null a copy to dst_ptr is performed. */
-    fn copy_model_data_to_ptr(
-        &self,
-        mesh_attributes_types_to_copy: MeshAttributeType,
-        textures_to_copy: TextureType,
-        dst_ptr: *mut c_void,
-    ) -> u64 {
-        if dst_ptr.is_null() {
-            return self.validate_copy(mesh_attributes_types_to_copy, textures_to_copy);
-        }
-        0
-    }
-}
-
-impl GltfModelReader {
-    fn get_mesh_attribute_from_accessor(accessor: gltf::Accessor) -> GltfPrimitiveMeshAttribute {
-        let accessor_view = accessor.view().unwrap();
-        GltfPrimitiveMeshAttribute {
-            buffer_data_start: (accessor.offset() + accessor_view.offset()) as u64,
-            buffer_data_len: accessor_view.length() as u64,
-            element_size: accessor.size() as u32,
-        }
-    }
+    fn coerce_images_to_format(&mut self, format: ash::vk::Format) {}
 
     /* validates the model given the following conditions,
     if one of the following is not valid, the function panic
@@ -185,40 +192,44 @@ impl GltfModelReader {
     every normal has size 12
     every tangent has size 16
     every tex_coord has size 8
-    all available mesh attributes have the same element count
-    all textures have the same format and extent */
+    each primitive has same element count for all available mesh attributes
+    each primitive has same extent and format for all textures */
     fn validate_model(&self) {
-        self.primitives.iter().map(|primitive| {
+        self.primitives.iter().for_each(|primitive| {
             let mut common_element_count = None;
-            primitive.mesh_attributes.iter().map(|mesh_attribute| {
-                let mesh_attribute_element_count =
-                    mesh_attribute.1.buffer_data_len / mesh_attribute.1.element_size;
-                if common_element_count.is_none() {
-                    common_element_count = Some(mesh_attribute_element_count);
-                } else {
-                    assert_eq!(common_element_count, mesh_attribute_element_count);
-                }
+            for mesh_attribute in &primitive.mesh_attributes {
                 match mesh_attribute.0 {
                     &MeshAttributeType::VERTICES => assert_eq!(mesh_attribute.1.element_size, 12),
                     &MeshAttributeType::TEX_COORDS => assert_eq!(mesh_attribute.1.element_size, 8),
                     &MeshAttributeType::NORMALS => assert_eq!(mesh_attribute.1.element_size, 12),
                     &MeshAttributeType::TANGENTS => assert_eq!(mesh_attribute.1.element_size, 16),
-                    &MeshAttributeType::INDICES => assert_eq!(mesh_attribute.1.element_size, 12),
+                    _ => continue,
                 }
-            });
 
-            let mut common_image_format_extent = None;
-            primitive.textures.iter().map(|texture| {
-                if common_image_format_extent.is_none() {
-                    common_image_format_extent =
-                        Some((texture.1.format, (texture.1.width, texture.1.height)));
+                let mesh_attribute_element_count =
+                    mesh_attribute.1.buffer_data_len / mesh_attribute.1.element_size as u64;
+                if common_element_count.is_none() {
+                    common_element_count = Some(mesh_attribute_element_count);
+                } else {
+                    assert_eq!(common_element_count.unwrap(), mesh_attribute_element_count);
+                }
+            }
+
+            let mut common_image_format = None;
+            let mut common_image_extent = None;
+            for texture in &primitive.textures {
+                let texture_data = unsafe { (texture.1).as_ref().unwrap() };
+                if common_image_extent.is_none() {
+                    common_image_format = Some(texture_data.format);
+                    common_image_extent = Some((texture_data.width, texture_data.height));
                 } else {
                     assert_eq!(
-                        common_image_format_extent,
-                        (texture.1.format, (texture.1.width, texture.1.height))
+                        common_image_extent.unwrap(),
+                        (texture_data.width, texture_data.height)
                     );
+                    assert_eq!(common_image_format.unwrap(), texture_data.format);
                 }
-            });
+            }
         });
     }
 
