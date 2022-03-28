@@ -32,14 +32,12 @@ pub struct GltfModelReader {
 }
 
 impl ModelReader for GltfModelReader {
-    /*
-    Given a path, open a gltf file and perform little validation on it:
+    /* Given a path, open a gltf file and perform little validation on it:
     one mesh and one buffer
     every vertex has size 12
     every normal has size 12
     every tangent has size 16
-    every tex_coord has size 8
-    */
+    every tex_coord has size 8 */
     fn open(file_path: &Path) -> Self {
         let (document, mut buffers, images) = gltf::import(file_path)
             .expect(format!("Could not read file {:?}", file_path.as_os_str()).as_str());
@@ -63,19 +61,15 @@ impl ModelReader for GltfModelReader {
                     .attributes()
                     .filter_map(|primitive_attribute| match primitive_attribute.0 {
                         Semantic::Positions => {
-                            assert_eq!(primitive_attribute.1.size(), 12);
                             Some((MeshAttributeType::VERTICES, primitive_attribute.1))
                         }
                         Semantic::Normals => {
-                            assert_eq!(primitive_attribute.1.size(), 12);
                             Some((MeshAttributeType::NORMALS, primitive_attribute.1))
                         }
                         Semantic::Tangents => {
-                            assert_eq!(primitive_attribute.1.size(), 16);
                             Some((MeshAttributeType::TANGENTS, primitive_attribute.1))
                         }
                         Semantic::TexCoords(0) => {
-                            assert_eq!(primitive_attribute.1.size(), 8);
                             Some((MeshAttributeType::TEX_COORDS, primitive_attribute.1))
                         }
                         _ => None,
@@ -120,11 +114,13 @@ impl ModelReader for GltfModelReader {
             })
             .collect::<Vec<GltfPrimitive>>();
 
-        GltfModelReader {
+        let gltf_model = GltfModelReader {
             primitives,
             images,
             buffer_data: buffers.remove(0).0,
-        }
+        };
+        gltf_model.validate_model();
+        gltf_model
     }
 
     // normalize each primitive mesh individually
@@ -156,6 +152,10 @@ impl ModelReader for GltfModelReader {
         })
     }
 
+    /* if dst_ptr is null, requested fields are validated by checking if they are available in the model,
+    if not, the function panics.
+    Return value is the size (in bytes) written if dst_ptr would not be null
+    if dst_ptr is not null a copy to dst_ptr is performed. */
     fn copy_model_data_to_ptr(
         &self,
         mesh_attributes_types_to_copy: MeshAttributeType,
@@ -163,8 +163,7 @@ impl ModelReader for GltfModelReader {
         dst_ptr: *mut c_void,
     ) -> u64 {
         if dst_ptr.is_null() {
-            return self
-                .compute_and_validate_copy_size(mesh_attributes_types_to_copy, textures_to_copy);
+            return self.validate_copy(mesh_attributes_types_to_copy, textures_to_copy);
         }
         0
     }
@@ -180,7 +179,51 @@ impl GltfModelReader {
         }
     }
 
-    fn compute_and_validate_copy_size(
+    /* validates the model given the following conditions,
+    if one of the following is not valid, the function panic
+    every vertex has size 12
+    every normal has size 12
+    every tangent has size 16
+    every tex_coord has size 8
+    all available mesh attributes have the same element count
+    all textures have the same format and extent */
+    fn validate_model(&self) {
+        self.primitives.iter().map(|primitive| {
+            let mut common_element_count = None;
+            primitive.mesh_attributes.iter().map(|mesh_attribute| {
+                let mesh_attribute_element_count =
+                    mesh_attribute.1.buffer_data_len / mesh_attribute.1.element_size;
+                if common_element_count.is_none() {
+                    common_element_count = Some(mesh_attribute_element_count);
+                } else {
+                    assert_eq!(common_element_count, mesh_attribute_element_count);
+                }
+                match mesh_attribute.0 {
+                    &MeshAttributeType::VERTICES => assert_eq!(mesh_attribute.1.element_size, 12),
+                    &MeshAttributeType::TEX_COORDS => assert_eq!(mesh_attribute.1.element_size, 8),
+                    &MeshAttributeType::NORMALS => assert_eq!(mesh_attribute.1.element_size, 12),
+                    &MeshAttributeType::TANGENTS => assert_eq!(mesh_attribute.1.element_size, 16),
+                    &MeshAttributeType::INDICES => assert_eq!(mesh_attribute.1.element_size, 12),
+                }
+            });
+
+            let mut common_image_format_extent = None;
+            primitive.textures.iter().map(|texture| {
+                if common_image_format_extent.is_none() {
+                    common_image_format_extent =
+                        Some((texture.1.format, (texture.1.width, texture.1.height)));
+                } else {
+                    assert_eq!(
+                        common_image_format_extent,
+                        (texture.1.format, (texture.1.width, texture.1.height))
+                    );
+                }
+            });
+        });
+    }
+
+    // check if the requested fields are present, panic otherwise
+    fn validate_copy(
         &self,
         requested_mesh_attributes: MeshAttributeType,
         requested_textures: TextureType,
@@ -188,7 +231,7 @@ impl GltfModelReader {
         self.primitives
             .iter()
             .fold(0, |mut progressive_size, primitive| {
-                (0..8).for_each(|i| {
+                (0..MeshAttributeType::all().bits().count_ones()).for_each(|i| {
                     let current_attribute = MeshAttributeType::from_bits(1 << i).unwrap();
                     if requested_mesh_attributes.contains(current_attribute) {
                         match primitive.mesh_attributes.get(&current_attribute) {
@@ -196,7 +239,9 @@ impl GltfModelReader {
                             None => panic!("Mesh attribute {:?} not found", current_attribute),
                         }
                     }
+                });
 
+                (0..TextureType::all().bits().count_ones()).for_each(|i| {
                     let current_attribute = TextureType::from_bits(1 << i).unwrap();
                     if requested_textures.contains(current_attribute) {
                         match primitive.textures.get(&current_attribute) {
