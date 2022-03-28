@@ -1,5 +1,6 @@
 use super::model_reader::*;
 
+use ash::vk::Format;
 use gltf::{Gltf, Semantic};
 use nalgebra;
 use std::cmp::Ordering;
@@ -184,7 +185,23 @@ impl GltfModelReader {
         })
     }
 
-    fn coerce_images_to_format(&mut self, format: ash::vk::Format) {}
+    fn coerce_images_to_format(&mut self, format: ash::vk::Format) {
+        let (desired_bytes_per_pixel, desired_component_count) : (u32, u32) = match format {
+            Format::R8G8B8A8_UNORM => (1, 4),
+            _ => {panic!("Unsupported format requested during format coercion")}
+        };
+
+        for primitive in self.primitives {
+            for texture in primitive.textures {
+                let old_texture_format = unsafe { (*texture.1).format };
+                let (current_bytes_per_pixel, current_component_count) : (u32, u32) = match old_texture_format {
+                    gltf::image::Format::
+                    _ => {panic!("Unsupported current format during format coercion")}
+                }
+            }
+        }
+
+    }
 
     /* validates the model given the following conditions,
     if one of the following is not valid, the function panic
