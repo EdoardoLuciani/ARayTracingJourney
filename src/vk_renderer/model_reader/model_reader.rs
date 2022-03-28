@@ -1,4 +1,5 @@
 use bitflags::bitflags;
+use std::ffi::c_void;
 use std::path::Path;
 
 bitflags! {
@@ -20,4 +21,11 @@ bitflags! {
 
 pub trait ModelReader {
     fn open(file_path: &Path) -> Self;
+    fn normalize_vectors(&mut self);
+    fn copy_model_data_to_ptr(
+        &self,
+        mesh_attributes_types_to_copy: MeshAttributeType,
+        textures_to_copy: TextureType,
+        dst_ptr: *mut c_void,
+    ) -> u64;
 }

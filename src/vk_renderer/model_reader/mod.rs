@@ -1,2 +1,2 @@
-mod gltf_model_reader;
-mod model_reader;
+pub mod gltf_model_reader;
+pub mod model_reader;
