@@ -6,6 +6,7 @@ use nalgebra;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::io::Read;
 use std::ops::DivAssign;
 use std::path::Path;
 
@@ -185,22 +186,52 @@ impl GltfModelReader {
         })
     }
 
+    // Given a format, convert all images to that one
     fn coerce_images_to_format(&mut self, format: ash::vk::Format) {
-        let (desired_bytes_per_pixel, desired_component_count) : (u32, u32) = match format {
-            Format::R8G8B8A8_UNORM => (1, 4),
-            _ => {panic!("Unsupported format requested during format coercion")}
-        };
-
-        for primitive in self.primitives {
-            for texture in primitive.textures {
-                let old_texture_format = unsafe { (*texture.1).format };
-                let (current_bytes_per_pixel, current_component_count) : (u32, u32) = match old_texture_format {
-                    gltf::image::Format::
-                    _ => {panic!("Unsupported current format during format coercion")}
-                }
+        for primitive in &mut self.primitives {
+            for texture in &mut primitive.textures {
+                let mut conversion_map = HashMap::<usize, usize>::new();
+                let (s_t_size, d_t_size): (usize, usize) =
+                    match (unsafe { (*(*texture.1)).format }, format) {
+                        (gltf::image::Format::R8G8B8, Format::R8G8B8A8_UNORM) => {
+                            conversion_map.insert(0, 0);
+                            conversion_map.insert(1, 1);
+                            conversion_map.insert(2, 2);
+                            (3, 4)
+                        }
+                        _ => {
+                            panic!("Unsupported current format during format coercion")
+                        }
+                    };
+                transmute_pixels(
+                    unsafe { (*(*texture.1)).pixels.as_slice() },
+                    s_t_size,
+                    conversion_map,
+                    d_t_size,
+                );
             }
         }
+    }
 
+    fn transmute_pixels(
+        src_data: &[u8],
+        src_texel_size: usize,
+        source_to_destination_map: HashMap<usize, usize>,
+        dst_texel_size: usize,
+    ) -> Vec<u8> {
+        let mut out_data = Vec::<u8>::new();
+        out_data.resize((src_data.len() / src_texel_size) * dst_texel_size, 0);
+        let mut written_out_data: usize = 0;
+
+        for src_texel_idx in 0..src_data.len() / src_texel_size {
+            for src_byte_idx in 0..src_texel_size {
+                let dst_byte_idx = source_to_destination_map.get(&src_byte_idx).unwrap();
+                out_data[written_out_data + dst_byte_idx] =
+                    src_data[src_texel_idx * src_texel_size + src_byte_idx];
+            }
+            written_out_data += dst_texel_size;
+        }
+        out_data
     }
 
     /* validates the model given the following conditions,

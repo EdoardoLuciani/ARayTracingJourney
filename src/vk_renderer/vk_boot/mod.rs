@@ -23,7 +23,7 @@ unsafe extern "system" fn vk_debug_callback(
         CStr::from_ptr((*p_callback_data).p_message_id_name),
         CStr::from_ptr((*p_callback_data).p_message)
     )
-        .unwrap();
+    .unwrap();
     if message_severity.contains(vk::DebugUtilsMessageSeverityFlagsEXT::ERROR) {
         eprintln!("{}", message);
     } else {

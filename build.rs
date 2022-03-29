@@ -43,7 +43,7 @@ fn compile_recursively<T: AsRef<Path>>(
     for entry in std::fs::read_dir(source_dir).unwrap() {
         let path = entry.unwrap().path();
         if path.is_file() {
-            let shader_kind = match path.extension().unwrap().to_str() {
+            let shader_kind = match path.extension().and_then(|v| v.to_str()) {
                 Some("vert") => shaderc::ShaderKind::Vertex,
                 Some("frag") => shaderc::ShaderKind::Fragment,
                 Some("comp") => shaderc::ShaderKind::Compute,
