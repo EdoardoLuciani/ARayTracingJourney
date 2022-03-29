@@ -1,0 +1,2 @@
+[target.'cfg(target_feature = "avx")']
+rustflags = ["-C", "target-feature=+adx,+sse,+sse2,+sse3,+sse4.1,+sse4.2,+fma,+cmpxchg16b,+bmi,+bmi2,+avx,+avx2"]

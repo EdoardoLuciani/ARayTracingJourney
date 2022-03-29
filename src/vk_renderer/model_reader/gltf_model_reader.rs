@@ -216,12 +216,17 @@ impl GltfModelReader {
                 };
 
                 let mut conversion_map = Self::generate_src_to_dst_map(&src_map, &dst_map);
-                if s_t_size != d_t_size || conversion_map.iter().any(|v| v.0 != v.1) {
+                let are_components_in_different_position =
+                    conversion_map.iter().enumerate().any(|(i, v)| match v {
+                        Some(v) => i as u8 != *v,
+                        None => false,
+                    });
+                if s_t_size != d_t_size || are_components_in_different_position {
                     let new_data = GltfModelReader::permute_pixels(
                         unsafe { (*(*texture.1)).pixels.as_slice() },
-                        s_t_size as usize,
+                        s_t_size,
                         &conversion_map,
-                        d_t_size as usize,
+                        d_t_size,
                     );
                     unsafe {
                         let image_data = (*texture.1) as *mut gltf::image::Data;
@@ -240,35 +245,45 @@ impl GltfModelReader {
     fn generate_src_to_dst_map(
         src_map: &HashMap<char, u8>,
         dst_map: &HashMap<char, u8>,
-    ) -> HashMap<usize, usize> {
+    ) -> Vec<Option<u8>> {
         let mut conversion_map = HashMap::<usize, usize>::new();
-
         for (s_c, s_i) in src_map.iter() {
             if let Some(d_i) = dst_map.get(s_c) {
                 conversion_map.insert(*s_i as usize, *d_i as usize);
             }
         }
-        conversion_map
+
+        let mut conversion_vec: Vec<Option<u8>> =
+            vec![None; *conversion_map.keys().max().unwrap() + 1];
+        conversion_map.iter().for_each(|(k, v)| {
+            conversion_vec[*k] = Some(*v as u8);
+        });
+        conversion_vec
     }
 
     fn permute_pixels(
         src_data: &[u8],
-        src_texel_size: usize,
-        source_to_destination_map: &HashMap<usize, usize>,
-        dst_texel_size: usize,
+        src_texel_size: u8,
+        source_to_destination_map: &Vec<Option<u8>>,
+        dst_texel_size: u8,
     ) -> Vec<u8> {
         let mut out_data = Vec::<u8>::new();
-        out_data.resize((src_data.len() / src_texel_size) * dst_texel_size, 0);
+        out_data.resize(
+            (src_data.len() / src_texel_size as usize) * dst_texel_size as usize,
+            0,
+        );
         let mut written_out_data: usize = 0;
 
-        for src_texel_idx in 0..src_data.len() / src_texel_size {
-            for src_byte_idx in 0..src_texel_size {
-                if let Some(dst_byte_idx) = source_to_destination_map.get(&src_byte_idx) {
-                    out_data[written_out_data + dst_byte_idx] =
-                        src_data[src_texel_idx * src_texel_size + src_byte_idx];
+        for src_texel_idx in 0..src_data.len() / src_texel_size as usize {
+            for src_byte_idx in
+                0..std::cmp::min(src_texel_size, source_to_destination_map.len() as u8)
+            {
+                if let Some(dst_byte_idx) = source_to_destination_map[src_byte_idx as usize] {
+                    out_data[written_out_data + dst_byte_idx as usize] =
+                        src_data[src_texel_idx * src_texel_size as usize + src_byte_idx as usize];
                 }
             }
-            written_out_data += dst_texel_size;
+            written_out_data += dst_texel_size as usize;
         }
         out_data
     }
@@ -362,7 +377,8 @@ mod tests {
     fn wide_permute_pixel() {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5];
 
-        let conversion_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
+        //(0 -> 0), (1 -> 1), (2 -> 2)
+        let conversion_map = vec![Some(0), Some(1), Some(2)];
         let res = GltfModelReader::permute_pixels(&src_data, 3, &conversion_map, 4);
 
         assert_eq!(res, vec![0, 1, 2, 0, 3, 4, 5, 0])
@@ -372,7 +388,8 @@ mod tests {
     fn narrow_permute_pixel() {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
 
-        let conversion_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
+        //(0 -> 0), (1 -> 1), (2 -> 2)
+        let conversion_map = vec![Some(0), Some(1), Some(2)];
         let res = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 3);
 
         assert_eq!(res, vec![0, 1, 2, 4, 5, 6])
@@ -382,7 +399,8 @@ mod tests {
     fn mix_and_narrow_permute_pixel() {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
 
-        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1)]);
+        // (0 -> 2), (1 -> 0), (2 -> 1)
+        let conversion_map = vec![Some(2), Some(0), Some(1)];
         let res = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 3);
 
         assert_eq!(res, vec![1, 2, 0, 5, 6, 4])
@@ -392,7 +410,8 @@ mod tests {
     fn mix_and_wide_permute_pixel() {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5];
 
-        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1)]);
+        // (0 -> 2), (1 -> 0), (2 -> 1)
+        let conversion_map = vec![Some(2), Some(0), Some(1)];
         let res = GltfModelReader::permute_pixels(&src_data, 3, &conversion_map, 4);
 
         assert_eq!(res, vec![1, 2, 0, 0, 4, 5, 3, 0])
@@ -405,8 +424,8 @@ mod tests {
 
         let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
 
-        let out_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
-        assert_eq!(res, out_map)
+        // (0 -> 0), (1 -> 1), (2 -> 2)
+        assert_eq!(res, vec![Some(0), Some(1), Some(2)])
     }
 
     #[test]
@@ -416,8 +435,8 @@ mod tests {
 
         let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
 
-        let out_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
-        assert_eq!(res, out_map)
+        // (0 -> 0), (1 -> 1), (2 -> 2)
+        assert_eq!(res, vec![Some(0), Some(1), Some(2)])
     }
 
     #[test]
@@ -427,7 +446,7 @@ mod tests {
 
         let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
 
-        let out_map = HashMap::from([(0, 2), (1, 1), (2, 0)]);
-        assert_eq!(res, out_map)
+        // (0 -> 2), (1 -> 1), (2 -> 0)
+        assert_eq!(res, vec![Some(2), Some(1), Some(0)])
     }
 }
