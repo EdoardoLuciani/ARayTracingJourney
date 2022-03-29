@@ -1,6 +1,7 @@
 mod vk_renderer;
 mod window_manager;
 
+use std::time::Instant;
 use vk_renderer::model_reader::gltf_model_reader::GltfModelReader;
 use vk_renderer::model_reader::model_reader::ModelReader;
 use vk_renderer::renderer::*;
@@ -12,6 +13,11 @@ fn main() {
     let mut window = WindowManager::new(window_size, None);
     let mut renderer = VulkanTempleRayTracedRenderer::new(window_size, window.get_window_handle());
 
-    let sponza = GltfModelReader::open("assets/models/WaterBottle.glb".as_ref(), true, None);
-    println!("Hello");
+    let sponza = GltfModelReader::open(
+        "assets/models/WaterBottle.glb".as_ref(),
+        true,
+        Some(ash::vk::Format::B8G8R8A8_UNORM),
+    );
+
+    println!("{}", now.elapsed().as_millis());
 }

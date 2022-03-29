@@ -6,8 +6,9 @@ use nalgebra;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::c_void;
+use std::hash::Hash;
 use std::io::Read;
-use std::ops::DivAssign;
+use std::ops::{Deref, DivAssign};
 use std::path::Path;
 
 struct GltfPrimitiveMeshAttribute {
@@ -125,6 +126,9 @@ impl ModelReader for GltfModelReader {
         if normalize_vectors {
             gltf_model.normalize_vectors();
         }
+        if let Some(new_format) = coerce_image_to_format {
+            gltf_model.coerce_images_to_format(new_format);
+        }
 
         gltf_model.validate_model();
         gltf_model
@@ -188,35 +192,67 @@ impl GltfModelReader {
 
     // Given a format, convert all images to that one
     fn coerce_images_to_format(&mut self, format: ash::vk::Format) {
+        let (dst_map, d_t_size): (_, u8) = match format {
+            Format::R8G8B8A8_UNORM => (HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]), 4),
+            Format::B8G8R8A8_UNORM => (HashMap::from([('b', 0), ('g', 1), ('r', 2), ('a', 3)]), 4),
+            _ => {
+                panic!("Unsupported destination format during format coercion")
+            }
+        };
+
         for primitive in &mut self.primitives {
             for texture in &mut primitive.textures {
-                let mut conversion_map = HashMap::<usize, usize>::new();
-                let (s_t_size, d_t_size): (usize, usize) =
-                    match (unsafe { (*(*texture.1)).format }, format) {
-                        (gltf::image::Format::R8G8B8, Format::R8G8B8A8_UNORM) => {
-                            conversion_map.insert(0, 0);
-                            conversion_map.insert(1, 1);
-                            conversion_map.insert(2, 2);
-                            (3, 4)
-                        }
-                        _ => {
-                            panic!("Unsupported current format during format coercion")
-                        }
-                    };
-                transmute_pixels(
-                    unsafe { (*(*texture.1)).pixels.as_slice() },
-                    s_t_size,
-                    conversion_map,
-                    d_t_size,
-                );
+                let (src_map, s_t_size): (_, u8) = match unsafe { (*(*texture.1)).format } {
+                    gltf::image::Format::R8G8B8 => {
+                        (HashMap::from([('r', 0), ('g', 1), ('b', 2)]), 3)
+                    }
+                    gltf::image::Format::R8G8B8A8 => {
+                        (HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]), 4)
+                    }
+                    _ => {
+                        panic!("Unsupported source format during format coercion")
+                    }
+                };
+
+                let mut conversion_map = Self::generate_src_to_dst_map(&src_map, &dst_map);
+                if s_t_size != d_t_size || conversion_map.iter().any(|v| v.0 != v.1) {
+                    let new_data = GltfModelReader::permute_pixels(
+                        unsafe { (*(*texture.1)).pixels.as_slice() },
+                        s_t_size as usize,
+                        &conversion_map,
+                        d_t_size as usize,
+                    );
+                    unsafe {
+                        let image_data = ((*texture.1) as *mut gltf::image::Data);
+                        (*image_data).pixels = new_data;
+                        (*image_data).format = match format {
+                            Format::R8G8B8A8_UNORM => gltf::image::Format::R8G8B8A8,
+                            Format::B8G8R8A8_UNORM => gltf::image::Format::B8G8R8A8,
+                            _ => panic!("Unsupported destination format conversion"),
+                        };
+                    }
+                }
             }
         }
     }
 
-    fn transmute_pixels(
+    fn generate_src_to_dst_map(
+        src_map: &HashMap<char, u8>,
+        dst_map: &HashMap<char, u8>,
+    ) -> HashMap<usize, usize> {
+        let mut conversion_map = HashMap::<usize, usize>::new();
+        for (s_c, s_i) in src_map.iter() {
+            if let Some(d_i) = dst_map.get(s_c) {
+                conversion_map.insert(*s_i as usize, *d_i as usize);
+            }
+        }
+        conversion_map
+    }
+
+    fn permute_pixels(
         src_data: &[u8],
         src_texel_size: usize,
-        source_to_destination_map: HashMap<usize, usize>,
+        source_to_destination_map: &HashMap<usize, usize>,
         dst_texel_size: usize,
     ) -> Vec<u8> {
         let mut out_data = Vec::<u8>::new();
@@ -225,9 +261,10 @@ impl GltfModelReader {
 
         for src_texel_idx in 0..src_data.len() / src_texel_size {
             for src_byte_idx in 0..src_texel_size {
-                let dst_byte_idx = source_to_destination_map.get(&src_byte_idx).unwrap();
-                out_data[written_out_data + dst_byte_idx] =
-                    src_data[src_texel_idx * src_texel_size + src_byte_idx];
+                if let Some(dst_byte_idx) = source_to_destination_map.get(&src_byte_idx) {
+                    out_data[written_out_data + dst_byte_idx] =
+                        src_data[src_texel_idx * src_texel_size + src_byte_idx];
+                }
             }
             written_out_data += dst_texel_size;
         }
@@ -311,5 +348,84 @@ impl GltfModelReader {
                 });
                 progressive_size
             })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::GltfModelReader;
+    use std::collections::HashMap;
+
+    #[test]
+    fn wide_permute_pixel() {
+        let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5];
+
+        let conversion_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
+        let res = GltfModelReader::permute_pixels(&src_data, 3, &conversion_map, 4);
+
+        assert_eq!(res, vec![0, 1, 2, 0, 3, 4, 5, 0])
+    }
+
+    #[test]
+    fn narrow_permute_pixel() {
+        let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
+
+        let conversion_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
+        let res = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 3);
+
+        assert_eq!(res, vec![0, 1, 2, 4, 5, 6])
+    }
+
+    #[test]
+    fn mix_and_narrow_permute_pixel() {
+        let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
+
+        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1)]);
+        let res = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 3);
+
+        assert_eq!(res, vec![1, 2, 0, 5, 6, 4])
+    }
+
+    #[test]
+    fn mix_and_wide_permute_pixel() {
+        let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5];
+
+        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1)]);
+        let res = GltfModelReader::permute_pixels(&src_data, 3, &conversion_map, 4);
+
+        assert_eq!(res, vec![1, 2, 0, 0, 4, 5, 3, 0])
+    }
+
+    #[test]
+    fn wide_src_to_dst_map() {
+        let src_map: HashMap<char, u8> = HashMap::from([('r', 0), ('g', 1), ('b', 2)]);
+        let dst_map: HashMap<char, u8> = HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]);
+
+        let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
+
+        let out_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
+        assert_eq!(res, out_map)
+    }
+
+    #[test]
+    fn narrow_src_to_dst_map() {
+        let src_map: HashMap<char, u8> = HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]);
+        let dst_map: HashMap<char, u8> = HashMap::from([('r', 0), ('g', 1), ('b', 2)]);
+
+        let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
+
+        let out_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
+        assert_eq!(res, out_map)
+    }
+
+    #[test]
+    fn wide_mix_src_to_dst_map() {
+        let src_map: HashMap<char, u8> = HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]);
+        let dst_map: HashMap<char, u8> = HashMap::from([('b', 0), ('g', 1), ('r', 2)]);
+
+        let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
+
+        let out_map = HashMap::from([(0, 2), (1, 1), (2, 0)]);
+        assert_eq!(res, out_map)
     }
 }
