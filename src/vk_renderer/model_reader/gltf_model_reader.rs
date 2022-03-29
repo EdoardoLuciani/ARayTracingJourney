@@ -147,6 +147,7 @@ impl ModelReader for GltfModelReader {
         if dst_ptr.is_null() {
             return self.validate_copy(mesh_attributes_types_to_copy, textures_to_copy);
         }
+
         0
     }
 }
@@ -223,7 +224,7 @@ impl GltfModelReader {
                         d_t_size as usize,
                     );
                     unsafe {
-                        let image_data = ((*texture.1) as *mut gltf::image::Data);
+                        let image_data = (*texture.1) as *mut gltf::image::Data;
                         (*image_data).pixels = new_data;
                         (*image_data).format = match format {
                             Format::R8G8B8A8_UNORM => gltf::image::Format::R8G8B8A8,
@@ -241,6 +242,7 @@ impl GltfModelReader {
         dst_map: &HashMap<char, u8>,
     ) -> HashMap<usize, usize> {
         let mut conversion_map = HashMap::<usize, usize>::new();
+
         for (s_c, s_i) in src_map.iter() {
             if let Some(d_i) = dst_map.get(s_c) {
                 conversion_map.insert(*s_i as usize, *d_i as usize);
