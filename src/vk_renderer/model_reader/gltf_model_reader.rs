@@ -140,7 +140,7 @@ impl ModelReader for GltfModelReader {
         &self,
         mesh_attributes_types_to_copy: MeshAttributeType,
         textures_to_copy: TextureType,
-        dst_ptr: *mut c_void,
+        dst_ptr: *mut u8,
     ) -> ModelCopyInfo {
         let mut mesh_flags: Vec<MeshAttributeType> =
             bitflag_vec!(MeshAttributeType, mesh_attributes_types_to_copy);
@@ -150,7 +150,8 @@ impl ModelReader for GltfModelReader {
         let texture_flags: Vec<TextureType> = bitflag_vec!(TextureType, textures_to_copy);
 
         let mut written_bytes: u64 = 0;
-        let primitives_copy_data = self.primitives
+        let primitives_copy_data = self
+            .primitives
             .iter()
             .map(|primitive| {
                 let mut copy_data = PrimitiveCopyInfo::default();
@@ -173,7 +174,7 @@ impl ModelReader for GltfModelReader {
                                             (attribute_to_copy.buffer_data_start
                                                 + i * attribute_to_copy.buffer_data_len)
                                                 as usize,
-                                        ) as *const c_void,
+                                        ),
                                         dst_ptr.add(written_bytes as usize),
                                         attribute_to_copy.buffer_data_len as usize,
                                     );
@@ -204,8 +205,7 @@ impl ModelReader for GltfModelReader {
                             std::ptr::copy_nonoverlapping(
                                 self.buffer_data
                                     .as_ptr()
-                                    .add(indices_data.buffer_data_start as usize)
-                                    as *const c_void,
+                                    .add(indices_data.buffer_data_start as usize),
                                 dst_ptr.add(written_bytes as usize),
                                 indices_data.buffer_data_len as usize,
                             );
@@ -247,7 +247,7 @@ impl ModelReader for GltfModelReader {
                         unsafe {
                             if !dst_ptr.is_null() {
                                 std::ptr::copy_nonoverlapping(
-                                    (*texture_to_copy).pixels.as_ptr() as *const c_void,
+                                    (*texture_to_copy).pixels.as_ptr(),
                                     dst_ptr.add(written_bytes as usize),
                                     (*texture_to_copy).pixels.len(),
                                 );
@@ -258,10 +258,8 @@ impl ModelReader for GltfModelReader {
                 }
                 copy_data
             })
-            .collect::<Vec<PrimitiveCopyInfo>>()
-        ModelCopyInfo {
-            primitives_copy_data
-        }
+            .collect::<Vec<PrimitiveCopyInfo>>();
+        ModelCopyInfo::new(primitives_copy_data)
     }
 }
 
@@ -448,38 +446,6 @@ impl GltfModelReader {
                 }
             }
         });
-    }
-
-    // check if the requested fields are present, panic otherwise
-    fn validate_copy(
-        &self,
-        requested_mesh_attributes: MeshAttributeType,
-        requested_textures: TextureType,
-    ) -> u64 {
-        self.primitives
-            .iter()
-            .fold(0, |mut progressive_size, primitive| {
-                (0..MeshAttributeType::all().bits().count_ones()).for_each(|i| {
-                    let current_attribute = MeshAttributeType::from_bits(1 << i).unwrap();
-                    if requested_mesh_attributes.contains(current_attribute) {
-                        match primitive.mesh_attributes.get(&current_attribute) {
-                            Some(v) => progressive_size += v.buffer_data_len,
-                            None => panic!("Mesh attribute {:?} not found", current_attribute),
-                        }
-                    }
-                });
-
-                (0..TextureType::all().bits().count_ones()).for_each(|i| {
-                    let current_attribute = TextureType::from_bits(1 << i).unwrap();
-                    if requested_textures.contains(current_attribute) {
-                        match primitive.textures.get(&current_attribute) {
-                            Some(v) => progressive_size += unsafe { (*(*v)).pixels.len() as u64 },
-                            None => panic!("Texture type {:?} not found", current_attribute),
-                        }
-                    }
-                });
-                progressive_size
-            })
     }
 }
 

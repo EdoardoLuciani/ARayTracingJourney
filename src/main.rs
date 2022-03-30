@@ -1,11 +1,10 @@
 mod vk_renderer;
 mod window_manager;
 
+use crate::vk_renderer::model_reader::model_reader::{MeshAttributeType, TextureType};
 use std::time::Instant;
 use vk_renderer::model_reader::gltf_model_reader::GltfModelReader;
 use vk_renderer::model_reader::model_reader::ModelReader;
-use vk_renderer::renderer::*;
-use window_manager::WindowManager;
 
 fn main() {
     let window_size = (800u32, 800u32);
@@ -19,5 +18,20 @@ fn main() {
         true,
         Some(ash::vk::Format::B8G8R8A8_UNORM),
     );
-    println!("{}", starting_time.elapsed().as_millis())
+    let res = sponza.copy_model_data_to_ptr(
+        MeshAttributeType::all(),
+        TextureType::all(),
+        std::ptr::null_mut(),
+    );
+    let model_size = res.compute_total_required_size();
+    println!("Model is {} bytes", model_size);
+
+    let mut vec_data = vec![0u8; model_size];
+    let res = sponza.copy_model_data_to_ptr(
+        MeshAttributeType::all(),
+        TextureType::all(),
+        vec_data.as_mut_ptr(),
+    );
+
+    println!("Time elapsed {}", starting_time.elapsed().as_millis())
 }

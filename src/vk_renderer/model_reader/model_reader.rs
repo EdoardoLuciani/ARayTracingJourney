@@ -60,19 +60,19 @@ pub struct ModelCopyInfo {
 }
 
 impl ModelCopyInfo {
-    fn new(primitives_copy_data: Vec<PrimitiveCopyInfo>) -> Self {
+    pub fn new(primitives_copy_data: Vec<PrimitiveCopyInfo>) -> Self {
         ModelCopyInfo {
             primitives_copy_data,
         }
     }
 
-    fn access_primitive_data(&self, idx: usize) -> &PrimitiveCopyInfo {
-        self.primitives_copy_data.get(idx).unwrap()
+    pub fn access_primitive_data(&self, idx: usize) -> &[PrimitiveCopyInfo] {
+        self.primitives_copy_data.as_slice()
     }
 
-    fn compute_total_required_size(&self) -> usize {
+    pub fn compute_total_required_size(&self) -> usize {
         let mut size = 0;
-        for primitive_copy_data in self.primitives_copy_data {
+        for primitive_copy_data in &self.primitives_copy_data {
             size += primitive_copy_data.mesh_size;
             size += primitive_copy_data.indices_size;
             size += primitive_copy_data.textures_size;
@@ -91,7 +91,7 @@ pub trait ModelReader {
         &self,
         mesh_attributes_types_to_copy: MeshAttributeType,
         textures_to_copy: TextureType,
-        dst_ptr: *mut c_void,
+        dst_ptr: *mut u8,
     ) -> ModelCopyInfo;
 }
 
