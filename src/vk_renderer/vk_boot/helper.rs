@@ -1,6 +1,3 @@
-pub mod base_vk;
-mod pointer_chain_helpers;
-
 use ash::vk;
 use std::ffi::CStr;
 use std::fmt::Write;
@@ -8,7 +5,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::Path;
 
-unsafe extern "system" fn vk_debug_callback(
+pub unsafe extern "system" fn vk_debug_callback(
     message_severity: vk::DebugUtilsMessageSeverityFlagsEXT,
     _message_type: vk::DebugUtilsMessageTypeFlagsEXT,
     p_callback_data: *const vk::DebugUtilsMessengerCallbackDataEXT,
@@ -32,7 +29,7 @@ unsafe extern "system" fn vk_debug_callback(
     vk::FALSE
 }
 
-fn get_binary_shader_data<T: AsRef<Path>>(
+pub fn get_binary_shader_data<T: AsRef<Path>>(
     path: T,
 ) -> (Vec<u8>, vk::ShaderStageFlags, vk::ShaderModuleCreateInfo) {
     let shader_type_extension = path

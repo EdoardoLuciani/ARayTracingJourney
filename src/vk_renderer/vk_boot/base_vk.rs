@@ -1,5 +1,5 @@
+use super::helper::*;
 use super::pointer_chain_helpers::*;
-use super::vk_debug_callback;
 use ash::{extensions::*, vk};
 use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
 use std::borrow::Borrow;
