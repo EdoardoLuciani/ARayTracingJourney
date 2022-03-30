@@ -1,14 +1,12 @@
 use super::model_reader::*;
 
 use ash::vk::Format;
-use gltf::{Gltf, Semantic};
+use gltf::Semantic;
 use nalgebra;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ffi::c_void;
-use std::hash::Hash;
-use std::io::Read;
-use std::ops::{Deref, DivAssign};
+use std::ops::DivAssign;
 use std::path::Path;
 
 struct GltfPrimitiveMeshAttribute {
@@ -143,12 +141,127 @@ impl ModelReader for GltfModelReader {
         mesh_attributes_types_to_copy: MeshAttributeType,
         textures_to_copy: TextureType,
         dst_ptr: *mut c_void,
-    ) -> u64 {
-        if dst_ptr.is_null() {
-            return self.validate_copy(mesh_attributes_types_to_copy, textures_to_copy);
+    ) -> ModelCopyInfo {
+        let mut mesh_flags: Vec<MeshAttributeType> =
+            bitflag_vec!(MeshAttributeType, mesh_attributes_types_to_copy);
+        if mesh_attributes_types_to_copy.contains(MeshAttributeType::INDICES) {
+            mesh_flags.pop();
         }
+        let texture_flags: Vec<TextureType> = bitflag_vec!(TextureType, textures_to_copy);
 
-        0
+        let mut written_bytes: u64 = 0;
+        let primitives_copy_data = self.primitives
+            .iter()
+            .map(|primitive| {
+                let mut copy_data = PrimitiveCopyInfo::default();
+
+                if let Some(first_mesh_flag) = mesh_flags.first() {
+                    copy_data.mesh_buffer_offset = written_bytes;
+                    let first_mesh_attribute = &primitive.mesh_attributes[first_mesh_flag];
+                    let element_count = first_mesh_attribute.buffer_data_len
+                        / first_mesh_attribute.element_size as u64;
+                    for i in 0..element_count {
+                        for mesh_flag in &mesh_flags {
+                            let attribute_to_copy = primitive
+                                .mesh_attributes
+                                .get(mesh_flag)
+                                .expect(&format!("Mesh attribute {:?} not found", mesh_flag));
+                            unsafe {
+                                if !dst_ptr.is_null() {
+                                    std::ptr::copy_nonoverlapping(
+                                        self.buffer_data.as_ptr().add(
+                                            (attribute_to_copy.buffer_data_start
+                                                + i * attribute_to_copy.buffer_data_len)
+                                                as usize,
+                                        ) as *const c_void,
+                                        dst_ptr.add(written_bytes as usize),
+                                        attribute_to_copy.buffer_data_len as usize,
+                                    );
+                                }
+                            }
+                            written_bytes += attribute_to_copy.buffer_data_len;
+                        }
+                    }
+                    copy_data.mesh_size = written_bytes - copy_data.mesh_buffer_offset;
+                    copy_data.single_mesh_element_size =
+                        (copy_data.mesh_size / element_count) as u32;
+                }
+
+                if mesh_attributes_types_to_copy.contains(MeshAttributeType::INDICES) {
+                    copy_data.indices_buffer_offset = written_bytes;
+                    let indices_data = primitive
+                        .mesh_attributes
+                        .get(&MeshAttributeType::INDICES)
+                        .expect(&format!(
+                            "Attribute {:?} not found in model",
+                            MeshAttributeType::INDICES
+                        ));
+                    copy_data.indices_size = indices_data.buffer_data_len;
+                    copy_data.single_index_size =
+                        (copy_data.indices_size / indices_data.buffer_data_len) as u32;
+                    unsafe {
+                        if !dst_ptr.is_null() {
+                            std::ptr::copy_nonoverlapping(
+                                self.buffer_data
+                                    .as_ptr()
+                                    .add(indices_data.buffer_data_start as usize)
+                                    as *const c_void,
+                                dst_ptr.add(written_bytes as usize),
+                                indices_data.buffer_data_len as usize,
+                            );
+                        }
+                    }
+                    written_bytes += indices_data.buffer_data_len;
+                }
+
+                if let Some(first_texture_type) = texture_flags.first() {
+                    copy_data.textures_count = texture_flags.len() as u32;
+                    let first_texture = unsafe {
+                        (*primitive.textures.get(first_texture_type).unwrap())
+                            .as_ref()
+                            .unwrap()
+                    };
+                    copy_data.textures_extent = (first_texture.width, first_texture.height);
+                    let component_size = first_texture.pixels.len()
+                        / (copy_data.textures_extent.0 * copy_data.textures_extent.1) as usize;
+                    written_bytes = get_aligned_memory_size(written_bytes, component_size as u64);
+                    copy_data.textures_buffer_offset = written_bytes;
+                    copy_data.textures_size = first_texture.pixels.len() as u64;
+                    copy_data.textures_format = match first_texture.format {
+                        gltf::image::Format::R8 => ash::vk::Format::R8_UNORM,
+                        gltf::image::Format::R8G8 => ash::vk::Format::R8G8_UNORM,
+                        gltf::image::Format::R8G8B8 => ash::vk::Format::R8G8B8_UNORM,
+                        gltf::image::Format::R8G8B8A8 => ash::vk::Format::R8G8B8A8_UNORM,
+                        gltf::image::Format::B8G8R8 => ash::vk::Format::B8G8R8_UNORM,
+                        gltf::image::Format::B8G8R8A8 => ash::vk::Format::B8G8R8A8_UNORM,
+                        gltf::image::Format::R16 => ash::vk::Format::R16_UNORM,
+                        gltf::image::Format::R16G16 => ash::vk::Format::R16G16_UNORM,
+                        gltf::image::Format::R16G16B16 => ash::vk::Format::R16G16B16_UNORM,
+                        gltf::image::Format::R16G16B16A16 => ash::vk::Format::R16G16B16A16_UNORM,
+                    };
+
+                    for texture_type in &texture_flags {
+                        let texture_to_copy = *primitive.textures.get(texture_type).expect(
+                            &format!("Texture type {:?} not found in model", texture_type),
+                        );
+                        unsafe {
+                            if !dst_ptr.is_null() {
+                                std::ptr::copy_nonoverlapping(
+                                    (*texture_to_copy).pixels.as_ptr() as *const c_void,
+                                    dst_ptr.add(written_bytes as usize),
+                                    (*texture_to_copy).pixels.len(),
+                                );
+                            }
+                            written_bytes += (*texture_to_copy).pixels.len() as u64;
+                        }
+                    }
+                }
+                copy_data
+            })
+            .collect::<Vec<PrimitiveCopyInfo>>()
+        ModelCopyInfo {
+            primitives_copy_data
+        }
     }
 }
 
@@ -253,6 +366,8 @@ impl GltfModelReader {
             }
         }
 
+        // The conversion from hashmap to vec is done because it grants a 4x speedup
+        // while looking up the keys
         let mut conversion_vec: Vec<Option<u8>> =
             vec![None; *conversion_map.keys().max().unwrap() + 1];
         conversion_map.iter().for_each(|(k, v)| {
