@@ -1,5 +1,5 @@
 use bitflags::bitflags;
-use std::ffi::c_void;
+
 use std::path::Path;
 
 bitflags! {
@@ -52,7 +52,6 @@ pub struct PrimitiveCopyInfo {
     pub textures_extent: (u32, u32),
     pub textures_format: ash::vk::Format,
     pub textures_size: u64,
-    pub textures_count: u32,
 }
 
 pub struct ModelCopyInfo {
@@ -66,7 +65,7 @@ impl ModelCopyInfo {
         }
     }
 
-    pub fn access_primitive_data(&self, idx: usize) -> &[PrimitiveCopyInfo] {
+    pub fn access_primitive_data(&self) -> &[PrimitiveCopyInfo] {
         self.primitives_copy_data.as_slice()
     }
 

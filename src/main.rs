@@ -18,6 +18,7 @@ fn main() {
         true,
         Some(ash::vk::Format::B8G8R8A8_UNORM),
     );
+
     let res = sponza.copy_model_data_to_ptr(
         MeshAttributeType::all(),
         TextureType::all(),

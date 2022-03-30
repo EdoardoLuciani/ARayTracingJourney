@@ -5,7 +5,6 @@ use gltf::Semantic;
 use nalgebra;
 use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::ffi::c_void;
 use std::ops::DivAssign;
 use std::path::Path;
 
@@ -172,15 +171,15 @@ impl ModelReader for GltfModelReader {
                                     std::ptr::copy_nonoverlapping(
                                         self.buffer_data.as_ptr().add(
                                             (attribute_to_copy.buffer_data_start
-                                                + i * attribute_to_copy.buffer_data_len)
+                                                + i * attribute_to_copy.element_size as u64)
                                                 as usize,
                                         ),
                                         dst_ptr.add(written_bytes as usize),
-                                        attribute_to_copy.buffer_data_len as usize,
+                                        attribute_to_copy.element_size as usize,
                                     );
                                 }
                             }
-                            written_bytes += attribute_to_copy.buffer_data_len;
+                            written_bytes += attribute_to_copy.element_size as u64;
                         }
                     }
                     copy_data.mesh_size = written_bytes - copy_data.mesh_buffer_offset;
@@ -215,7 +214,6 @@ impl ModelReader for GltfModelReader {
                 }
 
                 if let Some(first_texture_type) = texture_flags.first() {
-                    copy_data.textures_count = texture_flags.len() as u32;
                     let first_texture = unsafe {
                         (*primitive.textures.get(first_texture_type).unwrap())
                             .as_ref()
@@ -226,7 +224,8 @@ impl ModelReader for GltfModelReader {
                         / (copy_data.textures_extent.0 * copy_data.textures_extent.1) as usize;
                     written_bytes = get_aligned_memory_size(written_bytes, component_size as u64);
                     copy_data.textures_buffer_offset = written_bytes;
-                    copy_data.textures_size = first_texture.pixels.len() as u64;
+                    copy_data.textures_size =
+                        (first_texture.pixels.len() * texture_flags.len()) as u64;
                     copy_data.textures_format = match first_texture.format {
                         gltf::image::Format::R8 => ash::vk::Format::R8_UNORM,
                         gltf::image::Format::R8G8 => ash::vk::Format::R8G8_UNORM,
@@ -295,7 +294,7 @@ impl GltfModelReader {
                         _ => max_len,
                     }
                 });
-                vertex_data_slice.iter_mut().for_each(|mut elem| {
+                vertex_data_slice.iter_mut().for_each(|elem| {
                     elem.div_assign(max_val);
                 });
             }
@@ -326,7 +325,7 @@ impl GltfModelReader {
                     }
                 };
 
-                let mut conversion_map = Self::generate_src_to_dst_map(&src_map, &dst_map);
+                let conversion_map = Self::generate_src_to_dst_map(&src_map, &dst_map);
                 let are_components_in_different_position =
                     conversion_map.iter().enumerate().any(|(i, v)| match v {
                         Some(v) => i as u8 != *v,
@@ -451,8 +450,9 @@ impl GltfModelReader {
 
 #[cfg(test)]
 mod tests {
-    use crate::GltfModelReader;
+    use crate::*;
     use std::collections::HashMap;
+    use std::iter::zip;
 
     #[test]
     fn wide_permute_pixel() {
@@ -529,5 +529,82 @@ mod tests {
 
         // (0 -> 2), (1 -> 1), (2 -> 0)
         assert_eq!(res, vec![Some(2), Some(1), Some(0)])
+    }
+
+    #[test]
+    fn text_textured_cube() {
+        let sponza = GltfModelReader::open(
+            "assets/models/TexturedCube.glb".as_ref(),
+            true,
+            Some(ash::vk::Format::B8G8R8A8_UNORM),
+        );
+        let res = sponza.copy_model_data_to_ptr(
+            MeshAttributeType::all(),
+            TextureType::ALBEDO,
+            std::ptr::null_mut(),
+        );
+        let model_size = res.compute_total_required_size();
+
+        let mut vec_data = vec![0u8; model_size];
+        let res = sponza.copy_model_data_to_ptr(
+            MeshAttributeType::all(),
+            TextureType::ALBEDO,
+            vec_data.as_mut_ptr(),
+        );
+
+        let first_vertex_view = unsafe {
+            std::slice::from_raw_parts(
+                vec_data.as_ptr().add(
+                    res.access_primitive_data()
+                        .get(0)
+                        .unwrap()
+                        .mesh_buffer_offset as usize,
+                ) as *const f32,
+                12,
+            )
+        };
+        let reference_first_vertex = vec![
+            -0.5773503f32,
+            -0.5773503,
+            0.5773503,
+            6.0,
+            0.0,
+            0.0,
+            0.0,
+            1.0,
+            -1.0,
+            0.0,
+            -0.0,
+            1.0,
+        ];
+        for (e1, e2) in zip(first_vertex_view, reference_first_vertex) {
+            assert!(e1 - e2 < 1e-7);
+        }
+
+        let first_indices = unsafe {
+            std::slice::from_raw_parts(
+                vec_data.as_ptr().add(
+                    res.access_primitive_data()
+                        .get(0)
+                        .unwrap()
+                        .indices_buffer_offset as usize,
+                ) as *const u16,
+                4,
+            )
+        };
+        assert_eq!(first_indices, vec![0, 1, 2, 3]);
+
+        let first_texture_pixels = unsafe {
+            std::slice::from_raw_parts(
+                vec_data.as_ptr().add(
+                    res.access_primitive_data()
+                        .get(0)
+                        .unwrap()
+                        .textures_buffer_offset as usize,
+                ) as *const u8,
+                4,
+            )
+        };
+        assert_eq!(first_texture_pixels, vec![212, 212, 212, 255]);
     }
 }
