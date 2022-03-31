@@ -10,7 +10,7 @@ use std::os::raw::c_char;
 
 use raw_window_handle::RawWindowHandle;
 
-pub struct Base {
+pub struct VkBase {
     entry_fn: ash::Entry,
     pub instance: ash::Instance,
     surface: vk::SurfaceKHR,
@@ -19,7 +19,6 @@ pub struct Base {
     queue_family_index: u32,
     pub device: ash::Device,
     pub queues: Vec<vk::Queue>,
-    pub allocator: ManuallyDrop<gpu_allocator::vulkan::Allocator>,
     pub swapchain_fn: Option<khr::Swapchain>,
     pub swapchain_create_info: Option<vk::SwapchainCreateInfoKHR>,
     pub swapchain: vk::SwapchainKHR,
@@ -28,16 +27,6 @@ pub struct Base {
     debug_utils_fn: ext::DebugUtils,
     #[cfg(debug_assertions)]
     debug_utils_messenger: vk::DebugUtilsMessengerEXT,
-}
-
-pub struct BufferAllocation {
-    pub buffer: vk::Buffer,
-    pub allocation: vkalloc::Allocation,
-}
-
-pub struct ImageAllocation {
-    pub image: vk::Image,
-    pub allocation: vkalloc::Allocation,
 }
 
 #[derive(Clone)]
@@ -58,7 +47,7 @@ It supports instance creation with extensions and device selection with Vulkan 1
 and requested queues. It also initializes an allocator that greatly simplifies Vulkan allocations.
 Basically it is a bootstrap for a very common vulkan setup.
 */
-impl Base {
+impl VkBase {
     pub fn new(
         application_name: &str,
         instance_extensions: &[&str],
@@ -223,17 +212,7 @@ impl Base {
             .map(|i| unsafe { device.get_device_queue(selected_device.1, i) })
             .collect::<Vec<_>>();
 
-        let allocator =
-            gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
-                instance: instance.clone(),
-                device: device.clone(),
-                physical_device: selected_device.0,
-                debug_settings: Default::default(),
-                buffer_device_address: false,
-            })
-            .expect("Could not create Allocator");
-
-        Base {
+        VkBase {
             entry_fn,
             instance,
             surface,
@@ -242,7 +221,6 @@ impl Base {
             queue_family_index: selected_device.1,
             device,
             queues,
-            allocator: ManuallyDrop::new(allocator),
             swapchain_fn,
             swapchain_create_info: None,
             swapchain: vk::SwapchainKHR::null(),
@@ -392,37 +370,6 @@ impl Base {
                 );
             }
         }
-    }
-
-    pub fn allocate_buffer(
-        &mut self,
-        buffer_create_info: &vk::BufferCreateInfo,
-        memory_location: MemoryLocation,
-    ) -> BufferAllocation {
-        let buffer = unsafe { self.device.create_buffer(buffer_create_info, None) }.unwrap();
-        let requirements = unsafe { self.device.get_buffer_memory_requirements(buffer) };
-
-        let allocation = self
-            .allocator
-            .allocate(&vkalloc::AllocationCreateDesc {
-                name: "",
-                requirements,
-                location: memory_location,
-                linear: true, // buffers are always linear
-            })
-            .unwrap();
-
-        unsafe {
-            self.device
-                .bind_buffer_memory(buffer, allocation.memory(), allocation.offset())
-                .unwrap()
-        };
-        BufferAllocation { buffer, allocation }
-    }
-
-    pub fn destroy_buffer(&mut self, buffer: BufferAllocation) {
-        self.allocator.free(buffer.allocation).unwrap();
-        unsafe { self.device.destroy_buffer(buffer.buffer, None) };
     }
 
     pub fn create_cmd_pool_and_buffers(
@@ -643,10 +590,9 @@ impl Base {
     }
 }
 
-impl Drop for Base {
+impl Drop for VkBase {
     fn drop(&mut self) {
         unsafe {
-            ManuallyDrop::drop(&mut self.allocator);
             if let Some(swapchain_image_views) = self.swapchain_image_views.as_ref() {
                 for swapchain_image_view in swapchain_image_views.iter() {
                     self.device.destroy_image_view(*swapchain_image_view, None);
