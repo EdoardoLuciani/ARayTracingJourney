@@ -42,3 +42,10 @@ bitflags = "1.3.2"
 
 [build-dependencies]
 shaderc = "0.7.4"
+
+[dev-dependencies]
+criterion = "0.3.5"
+
+[[bench]]
+name = "permute_pixel_bench"
+harness = false
