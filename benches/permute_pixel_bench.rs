@@ -34,7 +34,7 @@ fn permute_pixels(
     out_data
 }
 
-fn permute_pixels_same_size_x86_sse(
+fn permute_pixels_same_size_x86_ssse(
     src_data: &mut [u8],
     texel_size: u8,
     src_to_dst_map: &HashMap<u8, u8>,
@@ -55,21 +55,56 @@ fn permute_pixels_same_size_x86_sse(
                 }
             }
         }
-
         let mask: __m128i = _mm_loadu_si128(mask_arr.as_ptr() as *const __m128i);
 
         for i in (0..src_data.len()).step_by(core::mem::size_of::<__m128i>()) {
             let mem_address = src_data.as_ptr().add(i) as *mut __m128i;
 
-            let data: __m128i = _mm_load_si128(mem_address);
+            let data: __m128i = _mm_loadu_si128(mem_address);
             let out_data = _mm_shuffle_epi8(data, mask);
-            _mm_store_si128(mem_address, out_data);
+            _mm_storeu_si128(mem_address, out_data);
+        }
+    }
+}
+
+// Permutes pixels with avx2 instructions (slower than ssse version on my processor)
+fn permute_pixels_same_size_x86_avx2(
+    src_data: &mut [u8],
+    texel_size: u8,
+    src_to_dst_map: &HashMap<u8, u8>,
+) {
+    use core::arch::x86_64::*;
+    unsafe {
+        // Converting the hashmap to a mask
+        // HashMap::from([(0, 2), (1, 0), (2, 1)]);
+        let mut mask_arr: [i8; core::mem::size_of::<__m256i>()] = [0; 32];
+
+        let simd_block_iter = (0..core::mem::size_of::<__m256i>()).step_by(texel_size as usize);
+        for texel_starting_byte in simd_block_iter {
+            for texel_component_idx in 0..texel_size {
+                if let Some(dst_idx) = src_to_dst_map.get(&texel_component_idx) {
+                    mask_arr[texel_starting_byte + *dst_idx as usize] =
+                        (texel_starting_byte as u8 + texel_component_idx) as i8;
+                }
+            }
+        }
+
+        let mask: __m256i = _mm256_loadu_si256(mask_arr.as_ptr() as *const __m256i);
+
+        for i in (0..src_data.len()).step_by(core::mem::size_of::<__m256i>()) {
+            let mem_address = src_data.as_ptr().add(i) as *mut __m256i;
+
+            // Unaligned loads because if we want to do aligned then we need to
+            // make sure our vec is allocated within 32 byte boundaries
+            let data: __m256i = _mm256_loadu_si256(mem_address);
+            let out_data = _mm256_shuffle_epi8(data, mask);
+            _mm256_storeu_si256(mem_address, out_data);
         }
     }
 }
 
 fn normal_permute(c: &mut Criterion) {
-    let mut input_data = (0..100_000_000)
+    let mut input_data = (0..268_435_456)
         .map(|i| (i % 256) as u8)
         .collect::<Vec<u8>>();
     let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
@@ -80,17 +115,36 @@ fn normal_permute(c: &mut Criterion) {
 }
 
 fn simd_permute(c: &mut Criterion) {
-    let mut input_data = (0..100_000_000)
+    let mut input_data = (0..268_435_456)
         .map(|i| (i % 256) as u8)
         .collect::<Vec<u8>>();
     let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
 
     c.bench_function("Simd Permute", |b| {
         b.iter(|| {
-            permute_pixels_same_size_x86_sse(&mut input_data, 4, &conversion_map);
+            permute_pixels_same_size_x86_ssse(&mut input_data, 4, &conversion_map);
         })
     });
 }
 
-criterion_group!(name = benches; config = Criterion::default().sample_size(10).measurement_time(std::time::Duration::from_secs(10)); targets = normal_permute, simd_permute);
+fn simd_avx2_permute(c: &mut Criterion) {
+    let mut vec = unsafe {
+        let layout = std::alloc::Layout::from_size_align(268_435_456, 32).unwrap();
+        let ptr = std::alloc::alloc(layout);
+
+        Vec::from_raw_parts(ptr, 268_435_456, 268_435_456)
+    };
+
+    (0..268_435_456).for_each(|i| vec[i] = (i % 256) as u8);
+
+    let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
+
+    c.bench_function("Simd AVX2 Permute", |b| {
+        b.iter(|| {
+            permute_pixels_same_size_x86_avx2(&mut vec, 4, &conversion_map);
+        })
+    });
+}
+
+criterion_group!(name = benches; config = Criterion::default().sample_size(10).measurement_time(std::time::Duration::from_secs(10)); targets = normal_permute, simd_permute, simd_avx2_permute);
 criterion_main!(benches);

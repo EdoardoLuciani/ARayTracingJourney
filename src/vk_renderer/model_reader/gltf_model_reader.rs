@@ -328,13 +328,14 @@ impl GltfModelReader {
 
                 let conversion_map = Self::generate_src_to_dst_map(&src_map, &dst_map);
                 if s_t_size != d_t_size || conversion_map.iter().any(|(src, dst)| src != dst) {
-                    if (s_t_size == d_t_size && s_t_size % 4 == 0) {
+                    if s_t_size == d_t_size && s_t_size % 4 == 0 {
                         let src_data = unsafe {
                             (*((*texture.1) as *mut gltf::image::Data))
                                 .pixels
                                 .as_mut_slice()
                         };
-                        GltfModelReader::permute_pixels_same_size_x86_simd(
+                        // For some weird reason the ssse is 2x faster on my processor than the avx2
+                        GltfModelReader::permute_pixels_same_size_x86_ssse(
                             src_data,
                             s_t_size,
                             &conversion_map,
@@ -410,18 +411,15 @@ impl GltfModelReader {
         out_data
     }
 
-    fn permute_pixels_same_size_x86_simd(
+    // Permutes pixels with ssse instructions (faster than avx2 version on my processor)
+    fn permute_pixels_same_size_x86_ssse(
         src_data: &mut [u8],
         texel_size: u8,
         src_to_dst_map: &HashMap<u8, u8>,
     ) {
         use core::arch::x86_64::*;
         unsafe {
-            // Converting the hashmap to a mask
-            // HashMap::from([(0, 2), (1, 0), (2, 1)]);
-
             let mut mask_arr: [i8; core::mem::size_of::<__m128i>()] = [0; 16];
-
             let simd_block_iter = (0..core::mem::size_of::<__m128i>()).step_by(texel_size as usize);
             for texel_starting_byte in simd_block_iter {
                 for texel_component_idx in 0..texel_size {
@@ -433,13 +431,45 @@ impl GltfModelReader {
             }
 
             let mask: __m128i = _mm_loadu_si128(mask_arr.as_ptr() as *const __m128i);
-
             for i in (0..src_data.len()).step_by(core::mem::size_of::<__m128i>()) {
                 let mem_address = src_data.as_ptr().add(i) as *mut __m128i;
-
-                let data: __m128i = _mm_load_si128(mem_address);
+                // Unaligned loads because if we want to do aligned then we need to
+                // make sure our vec is allocated within 16 byte boundaries, on my machine it worked
+                // even with the aligned versions but I'm not playing russian roulette
+                let data: __m128i = _mm_loadu_si128(mem_address);
                 let out_data = _mm_shuffle_epi8(data, mask);
-                _mm_store_si128(mem_address, out_data);
+                _mm_storeu_si128(mem_address, out_data);
+            }
+        }
+    }
+
+    // Permutes pixels with avx2 instructions (slower than ssse version on my processor)
+    fn permute_pixels_same_size_x86_avx2(
+        src_data: &mut [u8],
+        texel_size: u8,
+        src_to_dst_map: &HashMap<u8, u8>,
+    ) {
+        use core::arch::x86_64::*;
+        unsafe {
+            let mut mask_arr: [i8; core::mem::size_of::<__m256i>()] = [0; 32];
+            let simd_block_iter = (0..core::mem::size_of::<__m256i>()).step_by(texel_size as usize);
+            for texel_starting_byte in simd_block_iter {
+                for texel_component_idx in 0..texel_size {
+                    if let Some(dst_idx) = src_to_dst_map.get(&texel_component_idx) {
+                        mask_arr[texel_starting_byte + *dst_idx as usize] =
+                            (texel_starting_byte as u8 + texel_component_idx) as i8;
+                    }
+                }
+            }
+
+            let mask: __m256i = _mm256_loadu_si256(mask_arr.as_ptr() as *const __m256i);
+            for i in (0..src_data.len()).step_by(core::mem::size_of::<__m256i>()) {
+                let mem_address = src_data.as_ptr().add(i) as *mut __m256i;
+                // Unaligned loads because if we want to do aligned then we need to
+                // make sure our vec is allocated within 32 byte boundaries
+                let data: __m256i = _mm256_loadu_si256(mem_address);
+                let out_data = _mm256_shuffle_epi8(data, mask);
+                _mm256_storeu_si256(mem_address, out_data);
             }
         }
     }
@@ -549,9 +579,16 @@ mod tests {
 
         let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
 
-        let res1 = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 4);
-        GltfModelReader::permute_pixels_same_size_x86_simd(&mut src_data, 4, &conversion_map);
-        assert_eq!(src_data, res1);
+        let normal_result = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 4);
+
+        let mut sse_result = src_data.clone();
+        GltfModelReader::permute_pixels_same_size_x86_ssse(&mut sse_result, 4, &conversion_map);
+
+        let mut avx2_result = src_data.clone();
+        GltfModelReader::permute_pixels_same_size_x86_avx2(&mut avx2_result, 4, &conversion_map);
+
+        assert_eq!(normal_result, sse_result);
+        assert_eq!(normal_result, avx2_result);
     }
 
     #[test]
