@@ -77,8 +77,9 @@ fn permute_pixels_same_size_x86_avx2(
     unsafe {
         // Converting the hashmap to a mask
         // HashMap::from([(0, 2), (1, 0), (2, 1)]);
-        let mut mask_arr: [i8; core::mem::size_of::<__m256i>()] = [0; 32];
+        _mm256_zeroall();
 
+        let mut mask_arr: [i8; core::mem::size_of::<__m256i>()] = [0; 32];
         let simd_block_iter = (0..core::mem::size_of::<__m256i>()).step_by(texel_size as usize);
         for texel_starting_byte in simd_block_iter {
             for texel_component_idx in 0..texel_size {
@@ -90,7 +91,6 @@ fn permute_pixels_same_size_x86_avx2(
         }
 
         let mask: __m256i = _mm256_loadu_si256(mask_arr.as_ptr() as *const __m256i);
-
         for i in (0..src_data.len()).step_by(core::mem::size_of::<__m256i>()) {
             let mem_address = src_data.as_ptr().add(i) as *mut __m256i;
 
@@ -128,20 +128,14 @@ fn simd_permute(c: &mut Criterion) {
 }
 
 fn simd_avx2_permute(c: &mut Criterion) {
-    let mut vec = unsafe {
-        let layout = std::alloc::Layout::from_size_align(268_435_456, 32).unwrap();
-        let ptr = std::alloc::alloc(layout);
-
-        Vec::from_raw_parts(ptr, 268_435_456, 268_435_456)
-    };
-
-    (0..268_435_456).for_each(|i| vec[i] = (i % 256) as u8);
-
+    let mut input_data = (0..268_435_456)
+        .map(|i| (i % 256) as u8)
+        .collect::<Vec<u8>>();
     let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
 
     c.bench_function("Simd AVX2 Permute", |b| {
         b.iter(|| {
-            permute_pixels_same_size_x86_avx2(&mut vec, 4, &conversion_map);
+            permute_pixels_same_size_x86_avx2(&mut input_data, 4, &conversion_map);
         })
     });
 }

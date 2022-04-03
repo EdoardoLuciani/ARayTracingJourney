@@ -433,9 +433,7 @@ impl GltfModelReader {
             let mask: __m128i = _mm_loadu_si128(mask_arr.as_ptr() as *const __m128i);
             for i in (0..src_data.len()).step_by(core::mem::size_of::<__m128i>()) {
                 let mem_address = src_data.as_ptr().add(i) as *mut __m128i;
-                // Unaligned loads because if we want to do aligned then we need to
-                // make sure our vec is allocated within 16 byte boundaries, on my machine it worked
-                // even with the aligned versions but I'm not playing russian roulette
+
                 let data: __m128i = _mm_loadu_si128(mem_address);
                 let out_data = _mm_shuffle_epi8(data, mask);
                 _mm_storeu_si128(mem_address, out_data);
@@ -465,8 +463,7 @@ impl GltfModelReader {
             let mask: __m256i = _mm256_loadu_si256(mask_arr.as_ptr() as *const __m256i);
             for i in (0..src_data.len()).step_by(core::mem::size_of::<__m256i>()) {
                 let mem_address = src_data.as_ptr().add(i) as *mut __m256i;
-                // Unaligned loads because if we want to do aligned then we need to
-                // make sure our vec is allocated within 32 byte boundaries
+
                 let data: __m256i = _mm256_loadu_si256(mem_address);
                 let out_data = _mm256_shuffle_epi8(data, mask);
                 _mm256_storeu_si256(mem_address, out_data);

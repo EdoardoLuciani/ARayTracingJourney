@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 pub struct VkAllocator {
     pub allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
-    pub device_mesh_indices_suballocator: VkBuffersSubAllocator,
+    pub device_mesh_indices_sub_allocator: VkBuffersSubAllocator,
 }
 
 impl VkAllocator {
@@ -31,7 +31,7 @@ impl VkAllocator {
         );
         VkAllocator {
             allocator,
-            device_mesh_indices_suballocator: mesh_suballocator,
+            device_mesh_indices_sub_allocator: mesh_suballocator,
         }
     }
 }
