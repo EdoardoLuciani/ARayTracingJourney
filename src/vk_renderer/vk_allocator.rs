@@ -36,17 +36,21 @@ impl VkAllocator {
     }
 }
 
+pub struct VkMemoryResourceAllocator {
+    device: ash::Device,
+    allocator: vkalloc::Allocator,
+}
+
 pub struct BufferAllocation {
     pub buffer: vk::Buffer,
     pub allocation: vkalloc::Allocation,
     pub device_address: vk::DeviceAddress,
 }
 
-pub struct VkMemoryResourceAllocator {
-    device: ash::Device,
-    allocator: vkalloc::Allocator,
-}
+use mockall::predicate::*;
+use mockall::*;
 
+#[automock]
 impl VkMemoryResourceAllocator {
     pub fn new(
         instance: ash::Instance,
