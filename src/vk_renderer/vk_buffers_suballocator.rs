@@ -22,8 +22,6 @@ struct BufferUnitData {
     allocation: BufferAllocation,
     // tree to keep size|offset, the offset is a hashset to accommodate duplicate size values
     free_blocks: BTreeMap<usize, HashSet<usize>>,
-    // hashmap to keep offset|used_block
-    used_blocks: HashMap<usize, UsedBlock>,
 }
 
 struct UsedBlock {
@@ -36,6 +34,34 @@ pub struct SubAllocationData {
     buffer_offset: usize,
     host_ptr: Option<std::ptr::NonNull<std::ffi::c_void>>,
     device_ptr: Option<vk::DeviceAddress>,
+    alignment_offset_from_buffer_offset: usize,
+    block_size: usize,
+}
+
+impl SubAllocationData {
+    pub fn get_buffer(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    pub fn get_buffer_offset(&self) -> usize {
+        self.buffer_offset
+    }
+
+    pub fn get_host_ptr(&self) -> Option<std::ptr::NonNull<std::ffi::c_void>> {
+        self.host_ptr
+    }
+
+    pub fn get_device_ptr(&self) -> Option<vk::DeviceAddress> {
+        self.device_ptr
+    }
+
+    // returns the block size and offset of the suballocation
+    fn get_residing_block(&self) -> (usize, usize) {
+        (
+            self.block_size,
+            self.buffer_offset - self.alignment_offset_from_buffer_offset,
+        )
+    }
 }
 
 impl VkBuffersSubAllocator {
@@ -89,25 +115,15 @@ impl VkBuffersSubAllocator {
         }
 
         // if the selected block is too big, split it
-        if block_size != size {
+        if block_size > size {
             block_address =
                 Self::split_block_recursive(free_blocks, block_size, block_address, size);
         }
 
-        // correct the predicted alignment and insert it to used_blocks
+        // correct the predicted alignment
         let corrected_alignment_increment = predicted_alignment_increment
             * f32::ceil(block_address as f32 / predicted_alignment_increment as f32) as usize
             - block_address;
-        let used_block = UsedBlock {
-            size: block_size,
-            po2_alignment_increment: corrected_alignment_increment,
-        };
-        self.buffer_units
-            .get_mut(&buffer)
-            .unwrap()
-            .used_blocks
-            .insert(block_address + corrected_alignment_increment, used_block);
-
         let buffer_offset = block_address + corrected_alignment_increment;
         SubAllocationData {
             buffer: buffer,
@@ -119,11 +135,34 @@ impl VkBuffersSubAllocator {
             device_ptr: Some(
                 self.buffer_units[&buffer].allocation.device_address + buffer_offset as u64,
             ),
+            alignment_offset_from_buffer_offset: corrected_alignment_increment,
+            block_size: size,
         }
     }
 
-    pub fn free() {
-        todo!();
+    pub fn free(&mut self, sub_allocation_data: SubAllocationData) {
+        let buffer_unit = self
+            .buffer_units
+            .get_mut(&sub_allocation_data.buffer)
+            .unwrap();
+
+        let (block_size, block_offset) = sub_allocation_data.get_residing_block();
+        Self::merge_block_recursive(&mut buffer_unit.free_blocks, block_size, block_offset);
+
+        // checks if free_blocks has no allocated blocks
+        if buffer_unit.free_blocks.len() == 1
+            && buffer_unit
+                .free_blocks
+                .get(&(buffer_unit.allocation.allocation.size() as usize))
+                .is_some()
+        {
+            let removed_allocation = self
+                .buffer_units
+                .remove(&sub_allocation_data.buffer)
+                .unwrap();
+            RefCell::borrow_mut(self.allocator.borrow_mut())
+                .destroy_buffer(removed_allocation.allocation);
+        }
     }
 
     // picks the best available block given the input. Return type is block_size, block_address
@@ -190,8 +229,8 @@ impl VkBuffersSubAllocator {
     // function that given a block to free, tries to find children to merge, then reinserts the block back
     fn merge_block_recursive(
         buffer_free_blocks: &mut BTreeMap<usize, HashSet<usize>>,
-        block_address: usize,
         block_size: usize,
+        block_address: usize,
     ) {
         if let Occupied(mut entry) = buffer_free_blocks.entry(block_size) {
             let left_block_address = block_address as i64 - block_size as i64;
@@ -244,7 +283,6 @@ impl VkBuffersSubAllocator {
         let buffer_unit_data = BufferUnitData {
             allocation: buffer_allocation,
             free_blocks: BTreeMap::from([(buffer_size, HashSet::from([0]))]),
-            used_blocks: Default::default(),
         };
         self.buffer_units.insert(buffer, buffer_unit_data);
         buffer
@@ -253,7 +291,8 @@ impl VkBuffersSubAllocator {
 
 #[cfg(test)]
 mod tests {
-    use crate::vk_renderer::vk_buffers_suballocator::VkBuffersSubAllocator;
+    use super::MockVkMemoryResourceAllocator;
+    use super::VkBuffersSubAllocator;
     use std::collections::{BTreeMap, HashMap, HashSet};
 
     #[test]
