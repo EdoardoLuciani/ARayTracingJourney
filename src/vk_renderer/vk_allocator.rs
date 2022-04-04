@@ -47,10 +47,6 @@ pub struct BufferAllocation {
     pub device_address: vk::DeviceAddress,
 }
 
-use mockall::predicate::*;
-use mockall::*;
-
-#[automock]
 impl VkMemoryResourceAllocator {
     pub fn new(
         instance: ash::Instance,

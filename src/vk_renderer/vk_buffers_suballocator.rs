@@ -1,7 +1,6 @@
 use super::vk_allocator::*;
 use ash::vk;
-use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
-use num::Integer;
+use gpu_allocator::MemoryLocation;
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::btree_map::Entry::Occupied;
@@ -245,8 +244,8 @@ impl VkBuffersSubAllocator {
                 // The new block has the left adjacent block as the address
                 return Self::merge_block_recursive(
                     buffer_free_blocks,
-                    left_block_address as usize,
                     block_size * 2,
+                    left_block_address as usize,
                 );
             } else if addresses.remove(&(right_block_address as usize)) {
                 if addresses.is_empty() {
@@ -255,8 +254,8 @@ impl VkBuffersSubAllocator {
                 // The new block has the source block address as the address
                 return Self::merge_block_recursive(
                     buffer_free_blocks,
-                    block_address,
                     block_size * 2,
+                    block_address,
                 );
             }
         }
@@ -291,9 +290,15 @@ impl VkBuffersSubAllocator {
 
 #[cfg(test)]
 mod tests {
-    use super::MockVkMemoryResourceAllocator;
-    use super::VkBuffersSubAllocator;
+    use super::super::vk_allocator::*;
+    use super::*;
+    use crate::vk_renderer::vk_boot::vk_base::VkBase;
+    use ash::vk;
+    use gpu_allocator::MemoryLocation;
+    use std::borrow::BorrowMut;
+    use std::cell::RefCell;
     use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::rc::Rc;
 
     #[test]
     fn split_block_test() {
@@ -314,10 +319,54 @@ mod tests {
             (256usize, HashSet::<usize>::from([0, 256, 768])),
             (512usize, HashSet::<usize>::from([1024])),
         ]);
-        VkBuffersSubAllocator::merge_block_recursive(&mut free_blocks, 512, 128);
+        VkBuffersSubAllocator::merge_block_recursive(&mut free_blocks, 128, 512);
         // there is also another way to merge the blocks! this is not the only result possible
+        dbg!(&free_blocks);
         assert_eq!(free_blocks.len(), 2);
         assert_eq!(free_blocks[&256], HashSet::<usize>::from([0, 768]));
         assert_eq!(free_blocks[&512], HashSet::<usize>::from([256, 1024]));
+    }
+
+    #[test]
+    fn allocate_test() {
+        let mut physical_device_vulkan12_features =
+            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+        let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut physical_device_vulkan12_features);
+        let bvk = VkBase::new(
+            "",
+            &[],
+            &[],
+            &physical_device_features2,
+            &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
+            None,
+        );
+        let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
+            bvk.instance().clone(),
+            bvk.device().clone(),
+            *bvk.physical_device(),
+        )));
+        let mut allocator = VkBuffersSubAllocator::new(
+            resource_allocator.clone(),
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            MemoryLocation::GpuOnly,
+            16384 * 32,
+            16384,
+        );
+
+        let mut allocation_data = Vec::<SubAllocationData>::with_capacity(32);
+        (0..32).for_each(|_| {
+            allocation_data.push(allocator.allocate(16384, 1));
+        });
+        assert_eq!(allocator.buffer_units.len(), 1);
+        assert_eq!(
+            allocator
+                .buffer_units
+                .get(allocator.buffer_units.keys().next().unwrap())
+                .unwrap()
+                .free_blocks
+                .len(),
+            0
+        );
     }
 }

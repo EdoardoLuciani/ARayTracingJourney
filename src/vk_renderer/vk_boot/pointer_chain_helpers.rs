@@ -22,6 +22,25 @@ pub unsafe fn clone_vk_physical_device_features2_structure(
             cloned_child_struct_ptr
         }};
     }
+
+    macro_rules! allocate_struct2 {
+        ($struct_identifier:pat, $struct_type:ty) => {{
+            let cloned_child_struct_ptr = std::alloc::alloc(Layout::new::<$struct_type>());
+            (*(cloned_child_struct_ptr as *mut $struct_type)).s_type = $struct_identifier;
+            cloned_child_struct_ptr
+        }};
+
+        (match $s_type:expr; {
+            $( $struct_identifier:pat => $struct_type:ty ),*
+            $(,)?
+        }) => {
+            match $s_type {
+                $( $struct_identifier => allocate_struct2!($struct_identifier, $struct_type), )*
+                _ => panic!("Found unrecognized struct inside destroy_vk_physical_device_features2"),
+            }
+        }
+    }
+
     while !source_ptr.is_null() {
         let cloned_child_struct_ptr = match (*(source_ptr as *const vk::PhysicalDeviceFeatures2))
             .s_type

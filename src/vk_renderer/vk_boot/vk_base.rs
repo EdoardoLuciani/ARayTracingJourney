@@ -12,17 +12,17 @@ use raw_window_handle::RawWindowHandle;
 
 pub struct VkBase {
     entry_fn: ash::Entry,
-    pub instance: ash::Instance,
+    instance: ash::Instance,
     surface: vk::SurfaceKHR,
     surface_fn: Option<khr::Surface>,
     physical_device: vk::PhysicalDevice,
     queue_family_index: u32,
-    pub device: ash::Device,
-    pub queues: Vec<vk::Queue>,
-    pub swapchain_fn: Option<khr::Swapchain>,
-    pub swapchain_create_info: Option<vk::SwapchainCreateInfoKHR>,
-    pub swapchain: vk::SwapchainKHR,
-    pub swapchain_image_views: Option<Vec<vk::ImageView>>,
+    device: ash::Device,
+    queues: Vec<vk::Queue>,
+    swapchain_fn: Option<khr::Swapchain>,
+    swapchain_create_info: Option<vk::SwapchainCreateInfoKHR>,
+    swapchain: vk::SwapchainKHR,
+    swapchain_image_views: Option<Vec<vk::ImageView>>,
     #[cfg(debug_assertions)]
     debug_utils_fn: ext::DebugUtils,
     #[cfg(debug_assertions)]
@@ -372,6 +372,48 @@ impl VkBase {
         }
     }
 
+    pub fn instance(&self) -> &ash::Instance {
+        &self.instance
+    }
+
+    pub fn physical_device(&self) -> &vk::PhysicalDevice {
+        &self.physical_device
+    }
+
+    pub fn device(&self) -> &ash::Device {
+        &self.device
+    }
+
+    pub fn queues(&self) -> &[vk::Queue] {
+        self.queues.as_slice()
+    }
+
+    pub fn swapchain_fn(&self) -> &khr::Swapchain {
+        self.swapchain_fn
+            .as_ref()
+            .expect("Swapchain support is not enabled")
+    }
+
+    pub fn swapchain_create_info(&self) -> &vk::SwapchainCreateInfoKHR {
+        self.swapchain_create_info
+            .as_ref()
+            .expect("Swapchain support is not enabled")
+    }
+
+    pub fn swapchain(&self) -> &vk::SwapchainKHR {
+        if self.swapchain == vk::SwapchainKHR::null() {
+            panic!("Swapchain support is not enabled");
+        }
+        &self.swapchain
+    }
+
+    pub fn swapchain_image_views(&self) -> &[vk::ImageView] {
+        self.swapchain_image_views
+            .as_ref()
+            .expect("Swapchain support is not enabled")
+    }
+
+    #[deprecated]
     pub fn create_cmd_pool_and_buffers(
         &mut self,
         pool_flags: vk::CommandPoolCreateFlags,
@@ -399,6 +441,7 @@ impl VkBase {
         CommandRecordInfo { pool, buffers }
     }
 
+    #[deprecated]
     pub fn destroy_cmd_pool_and_buffers(&mut self, cmri: &CommandRecordInfo) {
         unsafe {
             self.device.free_command_buffers(cmri.pool, &cmri.buffers);
@@ -406,6 +449,7 @@ impl VkBase {
         }
     }
 
+    #[deprecated]
     pub fn create_descriptor_pool_and_sets(
         &mut self,
         pool_sizes: &[vk::DescriptorPoolSize],
@@ -433,12 +477,14 @@ impl VkBase {
         }
     }
 
+    #[deprecated]
     pub fn destroy_descriptor_pool_and_sets(&mut self, di: &DescriptorInfo) {
         unsafe {
             self.device.destroy_descriptor_pool(di.pool, None);
         }
     }
 
+    #[deprecated]
     pub fn create_semaphores(&mut self, count: u32) -> Vec<vk::Semaphore> {
         let semaphore_create_info = vk::SemaphoreCreateInfo::builder();
         (0..count)
@@ -450,6 +496,7 @@ impl VkBase {
             .collect()
     }
 
+    #[deprecated]
     pub fn destroy_semaphores(&mut self, semaphores: &Vec<vk::Semaphore>) {
         semaphores
             .iter()
