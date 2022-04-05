@@ -1,11 +1,14 @@
 use super::vk_allocator::*;
 use ash::vk;
+use ash::vk::DeviceAddress;
 use gpu_allocator::MemoryLocation;
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::btree_map::Entry::Occupied;
 use std::collections::*;
+use std::ffi::c_void;
 use std::ops::Bound::*;
+use std::ptr::NonNull;
 use std::rc::Rc;
 
 pub struct VkBuffersSubAllocator {
@@ -120,20 +123,27 @@ impl VkBuffersSubAllocator {
         }
 
         // correct the predicted alignment
-        let corrected_alignment_increment = predicted_alignment_increment
-            * f32::ceil(block_address as f32 / predicted_alignment_increment as f32) as usize
-            - block_address;
+        let corrected_alignment_increment =
+            alignment * f32::ceil(block_address as f32 / alignment as f32) as usize - block_address;
         let buffer_offset = block_address + corrected_alignment_increment;
+
+        let host_ptr = match self.buffer_units[&buffer]
+            .allocation
+            .allocation
+            .mapped_ptr()
+        {
+            Some(host_address) => unsafe { NonNull::new(host_address.as_ptr().add(buffer_offset)) },
+            None => None,
+        };
+        let device_ptr = match self.buffer_units[&buffer].allocation.device_address {
+            Some(device_address) => Some(device_address + buffer_offset as u64),
+            None => None,
+        };
         SubAllocationData {
-            buffer: buffer,
+            buffer,
             buffer_offset,
-            host_ptr: self.buffer_units[&buffer]
-                .allocation
-                .allocation
-                .mapped_ptr(),
-            device_ptr: Some(
-                self.buffer_units[&buffer].allocation.device_address + buffer_offset as u64,
-            ),
+            host_ptr,
+            device_ptr,
             alignment_offset_from_buffer_offset: corrected_alignment_increment,
             block_size: size,
         }
@@ -328,7 +338,7 @@ mod tests {
     }
 
     #[test]
-    fn allocate_test() {
+    fn allocate() {
         let mut physical_device_vulkan12_features =
             vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
         let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
@@ -368,5 +378,81 @@ mod tests {
                 .len(),
             0
         );
+    }
+
+    #[test]
+    fn allocate_2buffers() {
+        let mut physical_device_vulkan12_features =
+            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+        let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut physical_device_vulkan12_features);
+        let bvk = VkBase::new(
+            "",
+            &[],
+            &[],
+            &physical_device_features2,
+            &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
+            None,
+        );
+        let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
+            bvk.instance().clone(),
+            bvk.device().clone(),
+            *bvk.physical_device(),
+        )));
+        let mut allocator = VkBuffersSubAllocator::new(
+            resource_allocator.clone(),
+            vk::BufferUsageFlags::VERTEX_BUFFER,
+            MemoryLocation::GpuOnly,
+            16384 * 32,
+            16384,
+        );
+
+        let mut allocation_data = Vec::<SubAllocationData>::with_capacity(48);
+        (0..48).for_each(|_| {
+            allocation_data.push(allocator.allocate(16384, 1));
+        });
+        assert_eq!(allocator.buffer_units.len(), 2);
+    }
+
+    #[test]
+    fn allocate_free_2buffers_alignment_device_address() {
+        let mut physical_device_vulkan12_features =
+            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+        let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut physical_device_vulkan12_features);
+        let bvk = VkBase::new(
+            "",
+            &[],
+            &[],
+            &physical_device_features2,
+            &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
+            None,
+        );
+        let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
+            bvk.instance().clone(),
+            bvk.device().clone(),
+            *bvk.physical_device(),
+        )));
+        let mut allocator = VkBuffersSubAllocator::new(
+            resource_allocator.clone(),
+            vk::BufferUsageFlags::VERTEX_BUFFER | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            MemoryLocation::GpuOnly,
+            8192,
+            16,
+        );
+
+        let mut allocation_data = Vec::<SubAllocationData>::with_capacity(48);
+        (0..48).for_each(|_| {
+            allocation_data.push(allocator.allocate(220, 12));
+            assert_eq!(allocation_data.last().unwrap().get_buffer_offset() % 12, 0);
+            assert_eq!(allocation_data.last().unwrap().get_residing_block().0, 256);
+            assert!(allocation_data.last().unwrap().get_device_ptr().is_some());
+        });
+        assert_eq!(allocator.buffer_units.len(), 2);
+
+        (0..48).for_each(|_| {
+            allocator.free(allocation_data.pop().unwrap());
+        });
+        assert_eq!(allocator.buffer_units.len(), 0);
     }
 }

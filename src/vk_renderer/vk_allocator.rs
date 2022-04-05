@@ -44,7 +44,7 @@ pub struct VkMemoryResourceAllocator {
 pub struct BufferAllocation {
     pub buffer: vk::Buffer,
     pub allocation: vkalloc::Allocation,
-    pub device_address: vk::DeviceAddress,
+    pub device_address: Option<vk::DeviceAddress>,
 }
 
 impl VkMemoryResourceAllocator {
@@ -90,10 +90,19 @@ impl VkMemoryResourceAllocator {
                 .unwrap()
         };
 
-        let device_address = unsafe {
-            let buffer_device_address_info = vk::BufferDeviceAddressInfo::builder().buffer(buffer);
-            self.device
-                .get_buffer_device_address(&buffer_device_address_info)
+        let device_address = match buffer_create_info
+            .usage
+            .contains(vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS)
+        {
+            true => {
+                let buffer_device_address_info =
+                    vk::BufferDeviceAddressInfo::builder().buffer(buffer);
+                Some(unsafe {
+                    self.device
+                        .get_buffer_device_address(&buffer_device_address_info)
+                })
+            }
+            false => None,
         };
 
         BufferAllocation {
