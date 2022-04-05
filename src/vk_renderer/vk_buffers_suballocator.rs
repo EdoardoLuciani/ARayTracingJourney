@@ -1,12 +1,10 @@
 use super::vk_allocator::*;
 use ash::vk;
-use ash::vk::DeviceAddress;
 use gpu_allocator::MemoryLocation;
 use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::collections::btree_map::Entry::Occupied;
 use std::collections::*;
-use std::ffi::c_void;
 use std::ops::Bound::*;
 use std::ptr::NonNull;
 use std::rc::Rc;
@@ -100,7 +98,7 @@ impl VkBuffersSubAllocator {
         )
         .next_power_of_two();
 
-        let (buffer, mut block_size, mut block_address) =
+        let (buffer, block_size, mut block_address) =
             self.pick_best_fit_block(size, po2_rounded_alignment);
 
         let free_blocks = &mut self.buffer_units.get_mut(&buffer).unwrap().free_blocks;
@@ -127,18 +125,17 @@ impl VkBuffersSubAllocator {
             alignment * f32::ceil(block_address as f32 / alignment as f32) as usize - block_address;
         let buffer_offset = block_address + corrected_alignment_increment;
 
-        let host_ptr = match self.buffer_units[&buffer]
+        let host_ptr = self.buffer_units[&buffer]
             .allocation
             .allocation
             .mapped_ptr()
-        {
-            Some(host_address) => unsafe { NonNull::new(host_address.as_ptr().add(buffer_offset)) },
-            None => None,
-        };
-        let device_ptr = match self.buffer_units[&buffer].allocation.device_address {
-            Some(device_address) => Some(device_address + buffer_offset as u64),
-            None => None,
-        };
+            .map(|host_address| unsafe {
+                NonNull::new_unchecked(host_address.as_ptr().add(buffer_offset))
+            });
+        let device_ptr = self.buffer_units[&buffer]
+            .allocation
+            .device_address
+            .map(|device_address| device_address + buffer_offset as u64);
         SubAllocationData {
             buffer,
             buffer_offset,
@@ -305,9 +302,8 @@ mod tests {
     use crate::vk_renderer::vk_boot::vk_base::VkBase;
     use ash::vk;
     use gpu_allocator::MemoryLocation;
-    use std::borrow::BorrowMut;
     use std::cell::RefCell;
-    use std::collections::{BTreeMap, HashMap, HashSet};
+    use std::collections::{BTreeMap, HashSet};
     use std::rc::Rc;
 
     #[test]

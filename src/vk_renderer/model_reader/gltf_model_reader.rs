@@ -40,13 +40,13 @@ impl ModelReader for GltfModelReader {
         coerce_image_to_format: Option<ash::vk::Format>,
     ) -> Self {
         let (document, mut buffers, images) = gltf::import(file_path)
-            .expect(format!("Could not read file {:?}", file_path.as_os_str()).as_str());
+            .unwrap_or_else(|_| panic!("Could not read file {:?}", file_path.as_os_str()));
         assert_eq!(document.meshes().count(), 1);
         assert_eq!(document.buffers().count(), 1);
 
         let primitives = document
             .meshes()
-            .nth(0)
+            .next()
             .unwrap()
             .primitives()
             .map(|primitive_data| {
@@ -162,10 +162,10 @@ impl ModelReader for GltfModelReader {
                         / first_mesh_attribute.element_size as u64;
                     for i in 0..element_count {
                         for mesh_flag in &mesh_flags {
-                            let attribute_to_copy = primitive
-                                .mesh_attributes
-                                .get(mesh_flag)
-                                .expect(&format!("Mesh attribute {:?} not found", mesh_flag));
+                            let attribute_to_copy =
+                                primitive.mesh_attributes.get(mesh_flag).unwrap_or_else(|| {
+                                    panic!("Mesh attribute {:?} not found", mesh_flag)
+                                });
                             unsafe {
                                 if !dst_ptr.is_null() {
                                     std::ptr::copy_nonoverlapping(
@@ -192,10 +192,12 @@ impl ModelReader for GltfModelReader {
                     let indices_data = primitive
                         .mesh_attributes
                         .get(&MeshAttributeType::INDICES)
-                        .expect(&format!(
-                            "Attribute {:?} not found in model",
-                            MeshAttributeType::INDICES
-                        ));
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Attribute {:?} not found in model",
+                                MeshAttributeType::INDICES
+                            )
+                        });
                     copy_data.indices_size = indices_data.buffer_data_len;
                     copy_data.single_index_size =
                         (copy_data.indices_size / indices_data.buffer_data_len) as u32;
@@ -240,9 +242,10 @@ impl ModelReader for GltfModelReader {
                     };
 
                     for texture_type in &texture_flags {
-                        let texture_to_copy = *primitive.textures.get(texture_type).expect(
-                            &format!("Texture type {:?} not found in model", texture_type),
-                        );
+                        let texture_to_copy =
+                            *primitive.textures.get(texture_type).unwrap_or_else(|| {
+                                panic!("Texture type {:?} not found in model", texture_type)
+                            });
                         unsafe {
                             if !dst_ptr.is_null() {
                                 std::ptr::copy_nonoverlapping(
@@ -483,11 +486,11 @@ impl GltfModelReader {
         self.primitives.iter().for_each(|primitive| {
             let mut common_element_count = None;
             for mesh_attribute in &primitive.mesh_attributes {
-                match mesh_attribute.0 {
-                    &MeshAttributeType::VERTICES => assert_eq!(mesh_attribute.1.element_size, 12),
-                    &MeshAttributeType::TEX_COORDS => assert_eq!(mesh_attribute.1.element_size, 8),
-                    &MeshAttributeType::NORMALS => assert_eq!(mesh_attribute.1.element_size, 12),
-                    &MeshAttributeType::TANGENTS => assert_eq!(mesh_attribute.1.element_size, 16),
+                match *mesh_attribute.0 {
+                    MeshAttributeType::VERTICES => assert_eq!(mesh_attribute.1.element_size, 12),
+                    MeshAttributeType::TEX_COORDS => assert_eq!(mesh_attribute.1.element_size, 8),
+                    MeshAttributeType::NORMALS => assert_eq!(mesh_attribute.1.element_size, 12),
+                    MeshAttributeType::TANGENTS => assert_eq!(mesh_attribute.1.element_size, 16),
                     _ => continue,
                 }
 

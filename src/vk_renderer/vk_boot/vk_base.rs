@@ -1,11 +1,9 @@
 use super::helper::*;
 use super::pointer_chain_helpers::*;
 use ash::{extensions::*, vk};
-use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
 use std::borrow::Borrow;
 use std::collections::HashSet;
 use std::ffi::{CStr, CString};
-use std::mem::ManuallyDrop;
 use std::os::raw::c_char;
 
 use raw_window_handle::RawWindowHandle;
@@ -90,7 +88,7 @@ impl VkBase {
             &entry_fn,
             application_name,
             &instance_extensions,
-            &layer_names,
+            layer_names,
         );
 
         // Creation of an optional debug reporter
@@ -171,7 +169,7 @@ impl VkBase {
             &instance,
             desired_physical_device_features2,
             &desired_device_extensions_cptr.1,
-            &queues_types,
+            queues_types,
             surface_fn.as_ref(),
             surface,
         );
@@ -203,7 +201,7 @@ impl VkBase {
                 .expect("Error creating device");
         }
 
-        let mut swapchain_fn = match window_handle.is_some() {
+        let swapchain_fn = match window_handle.is_some() {
             true => Some(khr::Swapchain::new(&instance, &device)),
             false => None,
         };
@@ -457,7 +455,7 @@ impl VkBase {
     ) -> DescriptorInfo {
         let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
             .max_sets(sets.len() as u32)
-            .pool_sizes(&pool_sizes);
+            .pool_sizes(pool_sizes);
         let descriptor_pool = unsafe {
             self.device
                 .create_descriptor_pool(&descriptor_pool_create_info, None)
