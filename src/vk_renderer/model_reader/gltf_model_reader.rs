@@ -40,13 +40,13 @@ impl ModelReader for GltfModelReader {
         coerce_image_to_format: Option<ash::vk::Format>,
     ) -> Self {
         let (document, mut buffers, images) = gltf::import(file_path)
-            .expect(format!("Could not read file {:?}", file_path.as_os_str()).as_str());
+            .unwrap_or_else(|_| panic!("Could not read file {:?}", file_path.as_os_str()));
         assert_eq!(document.meshes().count(), 1);
         assert_eq!(document.buffers().count(), 1);
 
         let primitives = document
             .meshes()
-            .nth(0)
+            .next()
             .unwrap()
             .primitives()
             .map(|primitive_data| {
@@ -162,10 +162,10 @@ impl ModelReader for GltfModelReader {
                         / first_mesh_attribute.element_size as u64;
                     for i in 0..element_count {
                         for mesh_flag in &mesh_flags {
-                            let attribute_to_copy = primitive
-                                .mesh_attributes
-                                .get(mesh_flag)
-                                .expect(&format!("Mesh attribute {:?} not found", mesh_flag));
+                            let attribute_to_copy =
+                                primitive.mesh_attributes.get(mesh_flag).unwrap_or_else(|| {
+                                    panic!("Mesh attribute {:?} not found", mesh_flag)
+                                });
                             unsafe {
                                 if !dst_ptr.is_null() {
                                     std::ptr::copy_nonoverlapping(
@@ -192,10 +192,12 @@ impl ModelReader for GltfModelReader {
                     let indices_data = primitive
                         .mesh_attributes
                         .get(&MeshAttributeType::INDICES)
-                        .expect(&format!(
-                            "Attribute {:?} not found in model",
-                            MeshAttributeType::INDICES
-                        ));
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "Attribute {:?} not found in model",
+                                MeshAttributeType::INDICES
+                            )
+                        });
                     copy_data.indices_size = indices_data.buffer_data_len;
                     copy_data.single_index_size =
                         (copy_data.indices_size / indices_data.buffer_data_len) as u32;
@@ -240,9 +242,10 @@ impl ModelReader for GltfModelReader {
                     };
 
                     for texture_type in &texture_flags {
-                        let texture_to_copy = *primitive.textures.get(texture_type).expect(
-                            &format!("Texture type {:?} not found in model", texture_type),
-                        );
+                        let texture_to_copy =
+                            *primitive.textures.get(texture_type).unwrap_or_else(|| {
+                                panic!("Texture type {:?} not found in model", texture_type)
+                            });
                         unsafe {
                             if !dst_ptr.is_null() {
                                 std::ptr::copy_nonoverlapping(
@@ -306,6 +309,7 @@ impl GltfModelReader {
         let (dst_map, d_t_size): (_, u8) = match format {
             Format::R8G8B8A8_UNORM => (HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]), 4),
             Format::B8G8R8A8_UNORM => (HashMap::from([('b', 0), ('g', 1), ('r', 2), ('a', 3)]), 4),
+            Format::B8G8R8_UNORM => (HashMap::from([('b', 0), ('g', 1), ('r', 2)]), 3),
             _ => {
                 panic!("Unsupported destination format during format coercion")
             }
@@ -326,21 +330,33 @@ impl GltfModelReader {
                 };
 
                 let conversion_map = Self::generate_src_to_dst_map(&src_map, &dst_map);
-                let are_components_in_different_position =
-                    conversion_map.iter().enumerate().any(|(i, v)| match v {
-                        Some(v) => i as u8 != *v,
-                        None => false,
-                    });
-                if s_t_size != d_t_size || are_components_in_different_position {
-                    let new_data = GltfModelReader::permute_pixels(
-                        unsafe { (*(*texture.1)).pixels.as_slice() },
-                        s_t_size,
-                        &conversion_map,
-                        d_t_size,
-                    );
+                if s_t_size != d_t_size || conversion_map.iter().any(|(src, dst)| src != dst) {
+                    if s_t_size == d_t_size && s_t_size % 4 == 0 {
+                        let src_data = unsafe {
+                            (*((*texture.1) as *mut gltf::image::Data))
+                                .pixels
+                                .as_mut_slice()
+                        };
+                        // For some weird reason the ssse is 2x faster on my processor than the avx2
+                        GltfModelReader::permute_pixels_same_size_x86_ssse(
+                            src_data,
+                            s_t_size,
+                            &conversion_map,
+                        );
+                    } else {
+                        let new_data = GltfModelReader::permute_pixels(
+                            unsafe { (*(*texture.1)).pixels.as_slice() },
+                            s_t_size,
+                            &conversion_map,
+                            d_t_size,
+                        );
+                        unsafe {
+                            (*((*texture.1) as *mut gltf::image::Data)).pixels = new_data;
+                        }
+                    }
+
                     unsafe {
                         let image_data = (*texture.1) as *mut gltf::image::Data;
-                        (*image_data).pixels = new_data;
                         (*image_data).format = match format {
                             Format::R8G8B8A8_UNORM => gltf::image::Format::R8G8B8A8,
                             Format::B8G8R8A8_UNORM => gltf::image::Format::B8G8R8A8,
@@ -355,30 +371,30 @@ impl GltfModelReader {
     fn generate_src_to_dst_map(
         src_map: &HashMap<char, u8>,
         dst_map: &HashMap<char, u8>,
-    ) -> Vec<Option<u8>> {
-        let mut conversion_map = HashMap::<usize, usize>::new();
+    ) -> HashMap<u8, u8> {
+        let mut conversion_map = HashMap::<u8, u8>::new();
         for (s_c, s_i) in src_map.iter() {
             if let Some(d_i) = dst_map.get(s_c) {
-                conversion_map.insert(*s_i as usize, *d_i as usize);
+                conversion_map.insert(*s_i, *d_i);
             }
         }
-
-        // The conversion from hashmap to vec is done because it grants a 4x speedup
-        // while looking up the keys
-        let mut conversion_vec: Vec<Option<u8>> =
-            vec![None; *conversion_map.keys().max().unwrap() + 1];
-        conversion_map.iter().for_each(|(k, v)| {
-            conversion_vec[*k] = Some(*v as u8);
-        });
-        conversion_vec
+        conversion_map
     }
 
     fn permute_pixels(
         src_data: &[u8],
         src_texel_size: u8,
-        source_to_destination_map: &Vec<Option<u8>>,
+        src_to_dst_map: &HashMap<u8, u8>,
         dst_texel_size: u8,
     ) -> Vec<u8> {
+        // The conversion from hashmap to vec is done because it grants a 4x speedup
+        // while looking up the keys
+        let mut src_to_dst_map_vec: Vec<Option<u8>> =
+            vec![None; (*src_to_dst_map.keys().max().unwrap() + 1) as usize];
+        src_to_dst_map.iter().for_each(|(k, v)| {
+            src_to_dst_map_vec[*k as usize] = Some(*v as u8);
+        });
+
         let mut out_data = Vec::<u8>::new();
         out_data.resize(
             (src_data.len() / src_texel_size as usize) * dst_texel_size as usize,
@@ -387,10 +403,8 @@ impl GltfModelReader {
         let mut written_out_data: usize = 0;
 
         for src_texel_idx in 0..src_data.len() / src_texel_size as usize {
-            for src_byte_idx in
-                0..std::cmp::min(src_texel_size, source_to_destination_map.len() as u8)
-            {
-                if let Some(dst_byte_idx) = source_to_destination_map[src_byte_idx as usize] {
+            for src_byte_idx in 0..std::cmp::min(src_texel_size, src_to_dst_map_vec.len() as u8) {
+                if let Some(dst_byte_idx) = src_to_dst_map_vec[src_byte_idx as usize] {
                     out_data[written_out_data + dst_byte_idx as usize] =
                         src_data[src_texel_idx * src_texel_size as usize + src_byte_idx as usize];
                 }
@@ -398,6 +412,66 @@ impl GltfModelReader {
             written_out_data += dst_texel_size as usize;
         }
         out_data
+    }
+
+    // Permutes pixels with ssse instructions (faster than avx2 version on my processor)
+    fn permute_pixels_same_size_x86_ssse(
+        src_data: &mut [u8],
+        texel_size: u8,
+        src_to_dst_map: &HashMap<u8, u8>,
+    ) {
+        use core::arch::x86_64::*;
+        unsafe {
+            let mut mask_arr: [i8; core::mem::size_of::<__m128i>()] = [0; 16];
+            let simd_block_iter = (0..core::mem::size_of::<__m128i>()).step_by(texel_size as usize);
+            for texel_starting_byte in simd_block_iter {
+                for texel_component_idx in 0..texel_size {
+                    if let Some(dst_idx) = src_to_dst_map.get(&texel_component_idx) {
+                        mask_arr[texel_starting_byte + *dst_idx as usize] =
+                            (texel_starting_byte as u8 + texel_component_idx) as i8;
+                    }
+                }
+            }
+
+            let mask: __m128i = _mm_loadu_si128(mask_arr.as_ptr() as *const __m128i);
+            for i in (0..src_data.len()).step_by(core::mem::size_of::<__m128i>()) {
+                let mem_address = src_data.as_ptr().add(i) as *mut __m128i;
+
+                let data: __m128i = _mm_loadu_si128(mem_address);
+                let out_data = _mm_shuffle_epi8(data, mask);
+                _mm_storeu_si128(mem_address, out_data);
+            }
+        }
+    }
+
+    // Permutes pixels with avx2 instructions (slower than ssse version on my processor)
+    fn permute_pixels_same_size_x86_avx2(
+        src_data: &mut [u8],
+        texel_size: u8,
+        src_to_dst_map: &HashMap<u8, u8>,
+    ) {
+        use core::arch::x86_64::*;
+        unsafe {
+            let mut mask_arr: [i8; core::mem::size_of::<__m256i>()] = [0; 32];
+            let simd_block_iter = (0..core::mem::size_of::<__m256i>()).step_by(texel_size as usize);
+            for texel_starting_byte in simd_block_iter {
+                for texel_component_idx in 0..texel_size {
+                    if let Some(dst_idx) = src_to_dst_map.get(&texel_component_idx) {
+                        mask_arr[texel_starting_byte + *dst_idx as usize] =
+                            (texel_starting_byte as u8 + texel_component_idx) as i8;
+                    }
+                }
+            }
+
+            let mask: __m256i = _mm256_loadu_si256(mask_arr.as_ptr() as *const __m256i);
+            for i in (0..src_data.len()).step_by(core::mem::size_of::<__m256i>()) {
+                let mem_address = src_data.as_ptr().add(i) as *mut __m256i;
+
+                let data: __m256i = _mm256_loadu_si256(mem_address);
+                let out_data = _mm256_shuffle_epi8(data, mask);
+                _mm256_storeu_si256(mem_address, out_data);
+            }
+        }
     }
 
     /* validates the model given the following conditions,
@@ -412,11 +486,11 @@ impl GltfModelReader {
         self.primitives.iter().for_each(|primitive| {
             let mut common_element_count = None;
             for mesh_attribute in &primitive.mesh_attributes {
-                match mesh_attribute.0 {
-                    &MeshAttributeType::VERTICES => assert_eq!(mesh_attribute.1.element_size, 12),
-                    &MeshAttributeType::TEX_COORDS => assert_eq!(mesh_attribute.1.element_size, 8),
-                    &MeshAttributeType::NORMALS => assert_eq!(mesh_attribute.1.element_size, 12),
-                    &MeshAttributeType::TANGENTS => assert_eq!(mesh_attribute.1.element_size, 16),
+                match *mesh_attribute.0 {
+                    MeshAttributeType::VERTICES => assert_eq!(mesh_attribute.1.element_size, 12),
+                    MeshAttributeType::TEX_COORDS => assert_eq!(mesh_attribute.1.element_size, 8),
+                    MeshAttributeType::NORMALS => assert_eq!(mesh_attribute.1.element_size, 12),
+                    MeshAttributeType::TANGENTS => assert_eq!(mesh_attribute.1.element_size, 16),
                     _ => continue,
                 }
 
@@ -450,6 +524,7 @@ impl GltfModelReader {
 
 #[cfg(test)]
 mod tests {
+    use crate::vk_renderer::model_reader::model_reader::ModelReader;
     use crate::*;
     use std::collections::HashMap;
     use std::iter::zip;
@@ -459,7 +534,7 @@ mod tests {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5];
 
         //(0 -> 0), (1 -> 1), (2 -> 2)
-        let conversion_map = vec![Some(0), Some(1), Some(2)];
+        let conversion_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
         let res = GltfModelReader::permute_pixels(&src_data, 3, &conversion_map, 4);
 
         assert_eq!(res, vec![0, 1, 2, 0, 3, 4, 5, 0])
@@ -470,7 +545,7 @@ mod tests {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
 
         //(0 -> 0), (1 -> 1), (2 -> 2)
-        let conversion_map = vec![Some(0), Some(1), Some(2)];
+        let conversion_map = HashMap::from([(0, 0), (1, 1), (2, 2)]);
         let res = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 3);
 
         assert_eq!(res, vec![0, 1, 2, 4, 5, 6])
@@ -481,7 +556,7 @@ mod tests {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5, 6, 7];
 
         // (0 -> 2), (1 -> 0), (2 -> 1)
-        let conversion_map = vec![Some(2), Some(0), Some(1)];
+        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1)]);
         let res = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 3);
 
         assert_eq!(res, vec![1, 2, 0, 5, 6, 4])
@@ -492,10 +567,28 @@ mod tests {
         let src_data: Vec<u8> = vec![0, 1, 2, 3, 4, 5];
 
         // (0 -> 2), (1 -> 0), (2 -> 1)
-        let conversion_map = vec![Some(2), Some(0), Some(1)];
+        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1)]);
         let res = GltfModelReader::permute_pixels(&src_data, 3, &conversion_map, 4);
 
         assert_eq!(res, vec![1, 2, 0, 0, 4, 5, 3, 0])
+    }
+
+    #[test]
+    fn mix_and_wide_permute_pixel_x86_simd() {
+        let mut src_data = (0..128).map(|e| e).collect::<Vec<u8>>();
+
+        let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
+
+        let normal_result = GltfModelReader::permute_pixels(&src_data, 4, &conversion_map, 4);
+
+        let mut sse_result = src_data.clone();
+        GltfModelReader::permute_pixels_same_size_x86_ssse(&mut sse_result, 4, &conversion_map);
+
+        let mut avx2_result = src_data.clone();
+        GltfModelReader::permute_pixels_same_size_x86_avx2(&mut avx2_result, 4, &conversion_map);
+
+        assert_eq!(normal_result, sse_result);
+        assert_eq!(normal_result, avx2_result);
     }
 
     #[test]
@@ -506,7 +599,7 @@ mod tests {
         let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
 
         // (0 -> 0), (1 -> 1), (2 -> 2)
-        assert_eq!(res, vec![Some(0), Some(1), Some(2)])
+        assert_eq!(res, HashMap::from([(0, 0), (1, 1), (2, 2)]));
     }
 
     #[test]
@@ -516,8 +609,7 @@ mod tests {
 
         let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
 
-        // (0 -> 0), (1 -> 1), (2 -> 2)
-        assert_eq!(res, vec![Some(0), Some(1), Some(2)])
+        assert_eq!(res, HashMap::from([(0, 0), (1, 1), (2, 2)]));
     }
 
     #[test]
@@ -528,7 +620,7 @@ mod tests {
         let res = GltfModelReader::generate_src_to_dst_map(&src_map, &dst_map);
 
         // (0 -> 2), (1 -> 1), (2 -> 0)
-        assert_eq!(res, vec![Some(2), Some(1), Some(0)])
+        assert_eq!(res, HashMap::from([(0, 2), (1, 1), (2, 0)]));
     }
 
     #[test]

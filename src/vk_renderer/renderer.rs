@@ -1,18 +1,15 @@
+use super::model_reader::model_reader::ModelReader;
 use super::vk_boot::*;
 use ash::{extensions::*, vk};
-use gpu_allocator::MemoryLocation;
 use nalgebra::*;
-use raw_window_handle::RawWindowHandle;
-use std::ffi::CStr;
-use std::mem::size_of;
 
 struct FrameData {
     after_exec_fence: vk::Fence,
-    main_command: base_vk::CommandRecordInfo,
+    main_command: vk_base::CommandRecordInfo,
 }
 
 pub struct VulkanTempleRayTracedRenderer {
-    bvk: base_vk::Base,
+    bvk: vk_base::VkBase,
 }
 
 impl VulkanTempleRayTracedRenderer {
@@ -26,7 +23,7 @@ impl VulkanTempleRayTracedRenderer {
             .push_next(&mut physical_device_acceleration_structure)
             .push_next(&mut physical_device_ray_tracing_pipeline);
 
-        let bvk = base_vk::Base::new(
+        let bvk = vk_base::VkBase::new(
             "VulkanTempleRayTracedRenderer",
             &[],
             &[
@@ -40,5 +37,17 @@ impl VulkanTempleRayTracedRenderer {
         );
 
         VulkanTempleRayTracedRenderer { bvk }
+    }
+
+    pub fn add_model(model: &impl ModelReader, model_matrix: Matrix4<f32>) {
+        let acceleration_structure_geometry_triangles_data =
+            vk::AccelerationStructureGeometryTrianglesDataKHR::default();
+        let acceleration_structure_geometry_data = vk::AccelerationStructureGeometryDataKHR {
+            triangles: acceleration_structure_geometry_triangles_data,
+        };
+        let acceleration_structure_geometry = vk::AccelerationStructureGeometryKHR::builder()
+            .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+            .geometry(acceleration_structure_geometry_data)
+            .flags(vk::GeometryFlagsKHR::OPAQUE);
     }
 }

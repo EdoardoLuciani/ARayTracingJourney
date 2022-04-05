@@ -57,8 +57,10 @@ pub fn get_binary_shader_data<T: AsRef<Path>>(
     let mut data = Vec::<u8>::new();
     file.read_to_end(&mut data).expect("Could not read shader");
 
-    let mut module_create_info = vk::ShaderModuleCreateInfo::default();
-    module_create_info.code_size = data.len();
-    module_create_info.p_code = data.as_ptr() as *const u32;
+    let module_create_info = vk::ShaderModuleCreateInfo {
+        code_size: data.len(),
+        p_code: data.as_ptr() as *const u32,
+        ..vk::ShaderModuleCreateInfo::default()
+    };
     (data, shader_type, module_create_info)
 }

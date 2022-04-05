@@ -1,4 +1,3 @@
-use shaderc;
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -83,5 +82,5 @@ fn compile_recursively<T: AsRef<Path>>(
             is_there_an_error |= compile_recursively(path.as_path(), out_dir.as_ref(), compiler);
         }
     }
-    return is_there_an_error;
+    is_there_an_error
 }
