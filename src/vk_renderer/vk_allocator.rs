@@ -1,18 +1,20 @@
 use super::vk_buffers_suballocator::VkBuffersSubAllocator;
 use ash::vk;
 use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
+use std::borrow::BorrowMut;
 use std::cell::RefCell;
+use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
-pub struct VkAllocator {
-    pub allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
-    pub device_mesh_indices_sub_allocator: VkBuffersSubAllocator,
+pub struct VkAllocator<'a> {
+    allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
+    device_mesh_indices_sub_allocator: VkBuffersSubAllocator<'a>,
 }
 
-impl VkAllocator {
+impl<'a> VkAllocator<'a> {
     pub fn new(
         instance: ash::Instance,
-        device: ash::Device,
+        device: &'a ash::Device,
         physical_device: vk::PhysicalDevice,
     ) -> Self {
         let allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
@@ -34,23 +36,25 @@ impl VkAllocator {
             device_mesh_indices_sub_allocator: mesh_suballocator,
         }
     }
+
+    pub fn get_allocator_mut(&mut self) -> &mut VkMemoryResourceAllocator {
+        todo!()
+    }
+
+    pub fn get_device_mesh_indices_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
+        &mut self.device_mesh_indices_sub_allocator
+    }
 }
 
-pub struct VkMemoryResourceAllocator {
-    device: ash::Device,
+pub struct VkMemoryResourceAllocator<'a> {
+    device: &'a ash::Device,
     allocator: vkalloc::Allocator,
 }
 
-pub struct BufferAllocation {
-    pub buffer: vk::Buffer,
-    pub allocation: vkalloc::Allocation,
-    pub device_address: Option<vk::DeviceAddress>,
-}
-
-impl VkMemoryResourceAllocator {
+impl<'a> VkMemoryResourceAllocator<'a> {
     pub fn new(
         instance: ash::Instance,
-        device: ash::Device,
+        device: &'a ash::Device,
         physical_device: vk::PhysicalDevice,
     ) -> Self {
         let allocator =
@@ -115,5 +119,25 @@ impl VkMemoryResourceAllocator {
     pub fn destroy_buffer(&mut self, buffer: BufferAllocation) {
         self.allocator.free(buffer.allocation).unwrap();
         unsafe { self.device.destroy_buffer(buffer.buffer, None) };
+    }
+}
+
+pub struct BufferAllocation {
+    buffer: vk::Buffer,
+    allocation: vkalloc::Allocation,
+    device_address: Option<vk::DeviceAddress>,
+}
+
+impl BufferAllocation {
+    pub fn get_buffer(&self) -> vk::Buffer {
+        self.buffer
+    }
+
+    pub fn get_allocation(&self) -> &vkalloc::Allocation {
+        &self.allocation
+    }
+
+    pub fn get_device_address(&self) -> Option<vk::DeviceAddress> {
+        self.device_address
     }
 }

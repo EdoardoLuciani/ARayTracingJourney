@@ -9,8 +9,8 @@ use std::ops::Bound::*;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
-pub struct VkBuffersSubAllocator {
-    allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
+pub struct VkBuffersSubAllocator<'a> {
+    allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
     buffers_usage: vk::BufferUsageFlags,
     buffers_location: MemoryLocation,
     blocks_initial_size: usize,
@@ -19,14 +19,9 @@ pub struct VkBuffersSubAllocator {
 }
 
 struct BufferUnitData {
-    allocation: BufferAllocation,
+    buffer_allocation: BufferAllocation,
     // tree to keep size|offset, the offset is a hashset to accommodate duplicate size values
     free_blocks: BTreeMap<usize, HashSet<usize>>,
-}
-
-struct UsedBlock {
-    size: usize,
-    po2_alignment_increment: usize,
 }
 
 pub struct SubAllocationData {
@@ -64,9 +59,9 @@ impl SubAllocationData {
     }
 }
 
-impl VkBuffersSubAllocator {
+impl<'a> VkBuffersSubAllocator<'a> {
     pub fn new(
-        allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
+        allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
         buffers_usage: vk::BufferUsageFlags,
         buffers_location: MemoryLocation,
         blocks_initial_size: usize,
@@ -126,15 +121,15 @@ impl VkBuffersSubAllocator {
         let buffer_offset = block_address + corrected_alignment_increment;
 
         let host_ptr = self.buffer_units[&buffer]
-            .allocation
-            .allocation
+            .buffer_allocation
+            .get_allocation()
             .mapped_ptr()
             .map(|host_address| unsafe {
                 NonNull::new_unchecked(host_address.as_ptr().add(buffer_offset))
             });
         let device_ptr = self.buffer_units[&buffer]
-            .allocation
-            .device_address
+            .buffer_allocation
+            .get_device_address()
             .map(|device_address| device_address + buffer_offset as u64);
         SubAllocationData {
             buffer,
@@ -159,7 +154,7 @@ impl VkBuffersSubAllocator {
         if buffer_unit.free_blocks.len() == 1
             && buffer_unit
                 .free_blocks
-                .get(&(buffer_unit.allocation.allocation.size() as usize))
+                .get(&(buffer_unit.buffer_allocation.get_allocation().size() as usize))
                 .is_some()
         {
             let removed_allocation = self
@@ -167,7 +162,7 @@ impl VkBuffersSubAllocator {
                 .remove(&sub_allocation_data.buffer)
                 .unwrap();
             RefCell::borrow_mut(self.allocator.borrow_mut())
-                .destroy_buffer(removed_allocation.allocation);
+                .destroy_buffer(removed_allocation.buffer_allocation);
         }
     }
 
@@ -285,9 +280,9 @@ impl VkBuffersSubAllocator {
         let buffer_allocation = RefCell::borrow_mut(self.allocator.borrow_mut())
             .allocate_buffer(&buffer_create_info, self.buffers_location);
 
-        let buffer = buffer_allocation.buffer;
+        let buffer = buffer_allocation.get_buffer();
         let buffer_unit_data = BufferUnitData {
-            allocation: buffer_allocation,
+            buffer_allocation: buffer_allocation,
             free_blocks: BTreeMap::from([(buffer_size, HashSet::from([0]))]),
         };
         self.buffer_units.insert(buffer, buffer_unit_data);
@@ -349,7 +344,7 @@ mod tests {
         );
         let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
-            bvk.device().clone(),
+            &bvk.device(),
             *bvk.physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
@@ -392,7 +387,7 @@ mod tests {
         );
         let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
-            bvk.device().clone(),
+            &bvk.device(),
             *bvk.physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
@@ -426,7 +421,7 @@ mod tests {
         );
         let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
-            bvk.device().clone(),
+            &bvk.device(),
             *bvk.physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
