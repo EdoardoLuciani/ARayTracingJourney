@@ -39,7 +39,7 @@ impl VulkanTempleRayTracedRenderer {
         VulkanTempleRayTracedRenderer { bvk }
     }
 
-    pub fn add_model(model: &impl ModelReader, model_matrix: Matrix4<f32>) {
+    pub fn add_model(file_path: &std::path::Path, model_matrix: Matrix4<f32>) {
         let acceleration_structure_geometry_triangles_data =
             vk::AccelerationStructureGeometryTrianglesDataKHR::default();
         let acceleration_structure_geometry_data = vk::AccelerationStructureGeometryDataKHR {

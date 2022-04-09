@@ -34,8 +34,22 @@ macro_rules! bitflag_vec {
 }
 pub(crate) use bitflag_vec;
 
-pub fn get_aligned_memory_size(offset: u64, alignment: u64) -> u64 {
-    alignment * ((offset as f32 / alignment as f32).ceil() as u64)
+pub trait ModelReader {
+    fn open(
+        file_path: &Path,
+        normalize_vectors: bool,
+        coerce_image_to_format: Option<ash::vk::Format>,
+    ) -> Self;
+    fn copy_model_data_to_ptr(
+        &self,
+        mesh_attributes_types_to_copy: MeshAttributeType,
+        textures_to_copy: TextureType,
+        dst_ptr: *mut u8,
+    ) -> ModelCopyInfo;
+}
+
+pub struct ModelCopyInfo {
+    primitives_copy_data: Vec<PrimitiveCopyInfo>,
 }
 
 #[derive(Default)]
@@ -49,13 +63,9 @@ pub struct PrimitiveCopyInfo {
     pub single_index_size: u32,
 
     pub textures_buffer_offset: u64,
+    pub textures_size: u64,
     pub textures_extent: (u32, u32),
     pub textures_format: ash::vk::Format,
-    pub textures_size: u64,
-}
-
-pub struct ModelCopyInfo {
-    primitives_copy_data: Vec<PrimitiveCopyInfo>,
 }
 
 impl ModelCopyInfo {
@@ -80,18 +90,8 @@ impl ModelCopyInfo {
     }
 }
 
-pub trait ModelReader {
-    fn open(
-        file_path: &Path,
-        normalize_vectors: bool,
-        coerce_image_to_format: Option<ash::vk::Format>,
-    ) -> Self;
-    fn copy_model_data_to_ptr(
-        &self,
-        mesh_attributes_types_to_copy: MeshAttributeType,
-        textures_to_copy: TextureType,
-        dst_ptr: *mut u8,
-    ) -> ModelCopyInfo;
+pub fn get_aligned_memory_size(offset: u64, alignment: u64) -> u64 {
+    alignment * ((offset as f32 / alignment as f32).ceil() as u64)
 }
 
 #[cfg(test)]
