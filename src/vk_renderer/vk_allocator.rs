@@ -37,8 +37,8 @@ impl<'a> VkAllocator<'a> {
         }
     }
 
-    pub fn get_allocator_mut(&mut self) -> &mut VkMemoryResourceAllocator {
-        todo!()
+    pub fn get_allocator_mut(&mut self) -> std::cell::RefMut<VkMemoryResourceAllocator<'a>> {
+        self.allocator.as_ref().borrow_mut()
     }
 
     pub fn get_device_mesh_indices_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {

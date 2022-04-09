@@ -322,7 +322,6 @@ mod tests {
         ]);
         VkBuffersSubAllocator::merge_block_recursive(&mut free_blocks, 128, 512);
         // there is also another way to merge the blocks! this is not the only result possible
-        dbg!(&free_blocks);
         assert_eq!(free_blocks.len(), 2);
         assert_eq!(free_blocks[&256], HashSet::<usize>::from([0, 768]));
         assert_eq!(free_blocks[&512], HashSet::<usize>::from([256, 1024]));
@@ -369,6 +368,11 @@ mod tests {
                 .len(),
             0
         );
+
+        (0..32).for_each(|_| {
+            allocator.free(allocation_data.pop().unwrap());
+        });
+        assert_eq!(allocator.buffer_units.len(), 0);
     }
 
     #[test]
@@ -403,6 +407,11 @@ mod tests {
             allocation_data.push(allocator.allocate(16384, 1));
         });
         assert_eq!(allocator.buffer_units.len(), 2);
+
+        (0..48).for_each(|_| {
+            allocator.free(allocation_data.pop().unwrap());
+        });
+        assert_eq!(allocator.buffer_units.len(), 0);
     }
 
     #[test]
