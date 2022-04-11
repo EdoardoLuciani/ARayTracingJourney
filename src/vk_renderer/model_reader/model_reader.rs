@@ -1,5 +1,5 @@
 use bitflags::bitflags;
-
+use nalgebra::*;
 use std::path::Path;
 
 bitflags! {
@@ -46,6 +46,7 @@ pub trait ModelReader {
         textures_to_copy: TextureType,
         dst_ptr: *mut u8,
     ) -> ModelCopyInfo;
+    fn get_primitives_bounding_sphere(&self) -> Sphere;
 }
 
 pub struct ModelCopyInfo {
@@ -63,8 +64,9 @@ pub struct PrimitiveCopyInfo {
     pub single_index_size: u32,
 
     pub textures_buffer_offset: u64,
-    pub textures_size: u64,
+    pub textures_size: Vec<u64>,
     pub textures_extent: (u32, u32),
+    pub textures_layer_count: u32,
     pub textures_format: ash::vk::Format,
 }
 
@@ -79,18 +81,38 @@ impl ModelCopyInfo {
         self.primitives_copy_data.as_slice()
     }
 
-    pub fn compute_total_required_size(&self) -> usize {
+    pub fn compute_total_size(&self) -> usize {
+        let mut size: u64 = 0;
+        for primitive_copy_data in &self.primitives_copy_data {
+            size += primitive_copy_data.mesh_size;
+            size += primitive_copy_data.indices_size;
+            size += primitive_copy_data.textures_size.iter().sum::<u64>();
+        }
+        size as usize
+    }
+
+    pub fn compute_total_mesh_size(&self) -> usize {
         let mut size = 0;
         for primitive_copy_data in &self.primitives_copy_data {
             size += primitive_copy_data.mesh_size;
             size += primitive_copy_data.indices_size;
-            size += primitive_copy_data.textures_size;
         }
         size as usize
     }
 }
 
-pub fn get_aligned_memory_size(offset: u64, alignment: u64) -> u64 {
+pub struct Sphere {
+    center: Vector3<f32>,
+    radius: f32,
+}
+
+impl Sphere {
+    pub fn new(center: Vector3<f32>, radius: f32) -> Self {
+        Sphere { center, radius }
+    }
+}
+
+pub fn get_aligned_offset(offset: u64, alignment: u64) -> u64 {
     alignment * ((offset as f32 / alignment as f32).ceil() as u64)
 }
 

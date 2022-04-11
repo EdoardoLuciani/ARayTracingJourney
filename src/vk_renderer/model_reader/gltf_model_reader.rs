@@ -1,8 +1,7 @@
 use super::model_reader::*;
-
 use ash::vk::Format;
 use gltf::Semantic;
-use nalgebra;
+use nalgebra::*;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::DivAssign;
@@ -224,10 +223,9 @@ impl ModelReader for GltfModelReader {
                     copy_data.textures_extent = (first_texture.width, first_texture.height);
                     let component_size = first_texture.pixels.len()
                         / (copy_data.textures_extent.0 * copy_data.textures_extent.1) as usize;
-                    written_bytes = get_aligned_memory_size(written_bytes, component_size as u64);
+                    written_bytes = get_aligned_offset(written_bytes, component_size as u64);
                     copy_data.textures_buffer_offset = written_bytes;
-                    copy_data.textures_size =
-                        (first_texture.pixels.len() * texture_flags.len()) as u64;
+                    copy_data.textures_layer_count = 1;
                     copy_data.textures_format = match first_texture.format {
                         gltf::image::Format::R8 => ash::vk::Format::R8_UNORM,
                         gltf::image::Format::R8G8 => ash::vk::Format::R8G8_UNORM,
@@ -240,13 +238,16 @@ impl ModelReader for GltfModelReader {
                         gltf::image::Format::R16G16B16 => ash::vk::Format::R16G16B16_UNORM,
                         gltf::image::Format::R16G16B16A16 => ash::vk::Format::R16G16B16A16_UNORM,
                     };
-
+                    copy_data.textures_size = Vec::new();
                     for texture_type in &texture_flags {
                         let texture_to_copy =
                             *primitive.textures.get(texture_type).unwrap_or_else(|| {
                                 panic!("Texture type {:?} not found in model", texture_type)
                             });
                         unsafe {
+                            copy_data
+                                .textures_size
+                                .push((*texture_to_copy).pixels.len() as u64);
                             if !dst_ptr.is_null() {
                                 std::ptr::copy_nonoverlapping(
                                     (*texture_to_copy).pixels.as_ptr(),
@@ -262,6 +263,120 @@ impl ModelReader for GltfModelReader {
             })
             .collect::<Vec<PrimitiveCopyInfo>>();
         ModelCopyInfo::new(primitives_copy_data)
+    }
+
+    fn get_primitives_bounding_sphere(&self) -> Sphere {
+        let mut m_radius: f32;
+        let mut m_radius2: f32;
+
+        let mut xmax: Vector3<f32> = Vector3::from_element(f32::MIN);
+        let mut xmin: Vector3<f32> = Vector3::from_element(f32::MAX);
+        let mut ymin: Vector3<f32> = Vector3::from_element(f32::MAX);
+        let mut ymax: Vector3<f32> = Vector3::from_element(f32::MIN);
+        let mut zmin: Vector3<f32> = Vector3::from_element(f32::MAX);
+        let mut zmax: Vector3<f32> = Vector3::from_element(f32::MIN);
+        let mut dia1: Vector3<f32>;
+        let mut dia2: Vector3<f32>;
+
+        for primitive in &self.primitives {
+            let primitive_position = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
+            let vertices = unsafe {
+                std::slice::from_raw_parts(
+                    self.buffer_data
+                        .as_ptr()
+                        .add(primitive_position.buffer_data_start as usize)
+                        as *const Vector3<f32>,
+                    (primitive_position.buffer_data_len / primitive_position.element_size as u64)
+                        as usize,
+                )
+            };
+
+            for vertex in vertices {
+                if vertex[0] < xmin[0] {
+                    xmin = *vertex;
+                }
+                if vertex[0] > xmax[0] {
+                    xmax = *vertex;
+                }
+                if vertex[1] < ymin[1] {
+                    ymin = *vertex;
+                }
+                if vertex[1] > ymax[1] {
+                    ymax = *vertex;
+                }
+                if vertex[2] < zmin[2] {
+                    zmin = *vertex;
+                }
+                if vertex[2] > zmax[2] {
+                    zmax = *vertex;
+                }
+            }
+        }
+
+        /* Set *span = distance between the 2 points *min & *max (squared) */
+        let xspan = (xmax - xmin).magnitude_squared();
+        let yspan = (ymax - ymin).magnitude_squared();
+        let zspan = (zmax - zmin).magnitude_squared();
+
+        /* Set points dia1 & dia2 to the maximally separated pair */
+        dia1 = xmin;
+        dia2 = xmax;
+
+        /* assume xspan biggest */
+        let mut maxspan = xspan;
+
+        if (yspan > maxspan) {
+            maxspan = yspan;
+            dia1 = ymin;
+            dia2 = ymax;
+        }
+
+        if (zspan > maxspan) {
+            dia1 = zmin;
+            dia2 = zmax;
+        }
+
+        /* dia1,dia2 is a diameter of initial sphere */
+        /* calc initial center */
+        let mut center: Vector3<f32> = (dia1 + dia2) * 0.5f32;
+
+        /* calculate initial radius**2 and radius */
+        m_radius2 = (dia2 - center).magnitude_squared();
+        m_radius = m_radius2.sqrt();
+
+        /* SECOND PASS: increment current sphere */
+        for primitive in &self.primitives {
+            let primitive_position = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
+            let vertices = unsafe {
+                std::slice::from_raw_parts(
+                    self.buffer_data
+                        .as_ptr()
+                        .add(primitive_position.buffer_data_start as usize)
+                        as *const Vector3<f32>,
+                    (primitive_position.buffer_data_len / primitive_position.element_size as u64)
+                        as usize,
+                )
+            };
+
+            for vertex in vertices {
+                let delta: Vector3<f32> = vertex - center;
+                let old_to_p_sq = delta.magnitude_squared();
+                if (old_to_p_sq > m_radius2)
+                /* do r**2 test first */
+                {
+                    /* this point is outside of current sphere */
+                    let old_to_p = old_to_p_sq.sqrt();
+                    /* calc radius of new sphere */
+                    m_radius = (m_radius + old_to_p) * 0.5f32;
+                    m_radius2 = m_radius * m_radius; /* for next r**2 compare */
+                    let old_to_new = old_to_p - m_radius;
+                    /* calc center of new sphere */
+                    let recip = 1.0f32 / old_to_p;
+                    center = (m_radius * center + old_to_new * vertex) * recip;
+                }
+            }
+        }
+        Sphere::new(center, m_radius)
     }
 }
 
@@ -420,10 +535,10 @@ impl GltfModelReader {
         texel_size: u8,
         src_to_dst_map: &HashMap<u8, u8>,
     ) {
-        use core::arch::x86_64::*;
+        use ::core::arch::x86_64::*;
         unsafe {
-            let mut mask_arr: [i8; core::mem::size_of::<__m128i>()] = [0; 16];
-            let simd_block_iter = (0..core::mem::size_of::<__m128i>()).step_by(texel_size as usize);
+            let mut mask_arr: [i8; std::mem::size_of::<__m128i>()] = [0; 16];
+            let simd_block_iter = (0..std::mem::size_of::<__m128i>()).step_by(texel_size as usize);
             for texel_starting_byte in simd_block_iter {
                 for texel_component_idx in 0..texel_size {
                     if let Some(dst_idx) = src_to_dst_map.get(&texel_component_idx) {
@@ -434,7 +549,7 @@ impl GltfModelReader {
             }
 
             let mask: __m128i = _mm_loadu_si128(mask_arr.as_ptr() as *const __m128i);
-            for i in (0..src_data.len()).step_by(core::mem::size_of::<__m128i>()) {
+            for i in (0..src_data.len()).step_by(std::mem::size_of::<__m128i>()) {
                 let mem_address = src_data.as_ptr().add(i) as *mut __m128i;
 
                 let data: __m128i = _mm_loadu_si128(mem_address);
@@ -450,10 +565,10 @@ impl GltfModelReader {
         texel_size: u8,
         src_to_dst_map: &HashMap<u8, u8>,
     ) {
-        use core::arch::x86_64::*;
+        use ::core::arch::x86_64::*;
         unsafe {
-            let mut mask_arr: [i8; core::mem::size_of::<__m256i>()] = [0; 32];
-            let simd_block_iter = (0..core::mem::size_of::<__m256i>()).step_by(texel_size as usize);
+            let mut mask_arr: [i8; std::mem::size_of::<__m256i>()] = [0; 32];
+            let simd_block_iter = (0..std::mem::size_of::<__m256i>()).step_by(texel_size as usize);
             for texel_starting_byte in simd_block_iter {
                 for texel_component_idx in 0..texel_size {
                     if let Some(dst_idx) = src_to_dst_map.get(&texel_component_idx) {
@@ -464,7 +579,7 @@ impl GltfModelReader {
             }
 
             let mask: __m256i = _mm256_loadu_si256(mask_arr.as_ptr() as *const __m256i);
-            for i in (0..src_data.len()).step_by(core::mem::size_of::<__m256i>()) {
+            for i in (0..src_data.len()).step_by(std::mem::size_of::<__m256i>()) {
                 let mem_address = src_data.as_ptr().add(i) as *mut __m256i;
 
                 let data: __m256i = _mm256_loadu_si256(mem_address);
@@ -635,7 +750,7 @@ mod tests {
             TextureType::ALBEDO,
             std::ptr::null_mut(),
         );
-        let model_size = res.compute_total_required_size();
+        let model_size = res.compute_total_size();
 
         let mut vec_data = vec![0u8; model_size];
         let res = sponza.copy_model_data_to_ptr(
