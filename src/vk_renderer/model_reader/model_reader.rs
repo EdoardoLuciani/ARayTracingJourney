@@ -110,6 +110,14 @@ impl Sphere {
     pub fn new(center: Vector3<f32>, radius: f32) -> Self {
         Sphere { center, radius }
     }
+
+    pub fn get_center(&self) -> Vector3<f32> {
+        self.center
+    }
+
+    pub fn get_radius(&self) -> f32 {
+        self.radius
+    }
 }
 
 pub fn get_aligned_offset(offset: u64, alignment: u64) -> u64 {

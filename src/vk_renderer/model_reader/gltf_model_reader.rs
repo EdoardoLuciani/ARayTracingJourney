@@ -641,6 +641,7 @@ impl GltfModelReader {
 mod tests {
     use crate::vk_renderer::model_reader::model_reader::ModelReader;
     use crate::*;
+    use nalgebra::*;
     use std::collections::HashMap;
     use std::iter::zip;
 
@@ -745,6 +746,13 @@ mod tests {
             true,
             Some(ash::vk::Format::B8G8R8A8_UNORM),
         );
+        let sphere = sponza.get_primitives_bounding_sphere();
+        assert!((sphere.get_radius() - 1.0f32) < 1e-5);
+        assert!(
+            (sphere.get_center() - Vector3::<f32>::from_element(1.0))
+                < Vector3::<f32>::from_element(1e-5)
+        );
+
         let res = sponza.copy_model_data_to_ptr(
             MeshAttributeType::all(),
             TextureType::ALBEDO,
