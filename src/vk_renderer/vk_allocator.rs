@@ -120,6 +120,42 @@ impl<'a> VkMemoryResourceAllocator<'a> {
         self.allocator.free(buffer.allocation).unwrap();
         unsafe { self.device.destroy_buffer(buffer.buffer, None) };
     }
+
+    pub fn allocate_image(
+        &mut self,
+        image_create_info: &vk::ImageCreateInfo,
+        memory_location: MemoryLocation,
+    ) -> ImageAllocation {
+        let image = unsafe { self.device.create_image(image_create_info, None) }.unwrap();
+        let requirements = unsafe { self.device.get_image_memory_requirements(image) };
+
+        let allocation = self
+            .allocator
+            .allocate(&vkalloc::AllocationCreateDesc {
+                name: "",
+                requirements,
+                location: memory_location,
+                linear: true, // buffers are always linear
+            })
+            .unwrap();
+
+        unsafe {
+            self.device
+                .bind_image_memory(image, allocation.memory(), allocation.offset())
+                .unwrap()
+        };
+
+        ImageAllocation {
+            image,
+            allocation,
+            device_address: None,
+        }
+    }
+
+    pub fn destroy_image(&mut self, image: ImageAllocation) {
+        self.allocator.free(image.allocation).unwrap();
+        unsafe { self.device.destroy_image(image.image, None) };
+    }
 }
 
 pub struct BufferAllocation {
@@ -131,6 +167,26 @@ pub struct BufferAllocation {
 impl BufferAllocation {
     pub fn get_buffer(&self) -> vk::Buffer {
         self.buffer
+    }
+
+    pub fn get_allocation(&self) -> &vkalloc::Allocation {
+        &self.allocation
+    }
+
+    pub fn get_device_address(&self) -> Option<vk::DeviceAddress> {
+        self.device_address
+    }
+}
+
+pub struct ImageAllocation {
+    image: vk::Image,
+    allocation: vkalloc::Allocation,
+    device_address: Option<vk::DeviceAddress>,
+}
+
+impl ImageAllocation {
+    pub fn get_image(&self) -> vk::Image {
+        self.image
     }
 
     pub fn get_allocation(&self) -> &vkalloc::Allocation {

@@ -63,11 +63,12 @@ pub struct PrimitiveCopyInfo {
     pub indices_size: u64,
     pub single_index_size: u32,
 
-    pub textures_buffer_offset: u64,
-    pub textures_size: Vec<u64>,
-    pub textures_extent: (u32, u32),
-    pub textures_layer_count: u32,
-    pub textures_format: ash::vk::Format,
+    pub image_buffer_offset: u64,
+    pub image_size: u64,
+    pub image_format: ash::vk::Format,
+    pub image_extent: ash::vk::Extent3D,
+    pub image_mip_levels: u32,
+    pub image_layers: u32,
 }
 
 impl ModelCopyInfo {
@@ -86,7 +87,7 @@ impl ModelCopyInfo {
         for primitive_copy_data in &self.primitives_copy_data {
             size += primitive_copy_data.mesh_size;
             size += primitive_copy_data.indices_size;
-            size += primitive_copy_data.textures_size.iter().sum::<u64>();
+            size += primitive_copy_data.image_size
         }
         size as usize
     }

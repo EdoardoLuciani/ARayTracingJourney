@@ -220,13 +220,20 @@ impl ModelReader for GltfModelReader {
                             .as_ref()
                             .unwrap()
                     };
-                    copy_data.textures_extent = (first_texture.width, first_texture.height);
+                    copy_data.image_extent = ash::vk::Extent3D {
+                        width: first_texture.width,
+                        height: first_texture.height,
+                        depth: 1,
+                    };
                     let component_size = first_texture.pixels.len()
-                        / (copy_data.textures_extent.0 * copy_data.textures_extent.1) as usize;
+                        / (copy_data.image_extent.width
+                            * copy_data.image_extent.height
+                            * copy_data.image_extent.depth) as usize;
                     written_bytes = get_aligned_offset(written_bytes, component_size as u64);
-                    copy_data.textures_buffer_offset = written_bytes;
-                    copy_data.textures_layer_count = 1;
-                    copy_data.textures_format = match first_texture.format {
+                    copy_data.image_buffer_offset = written_bytes;
+                    copy_data.image_mip_levels = 1;
+                    copy_data.image_layers = texture_flags.len() as u32;
+                    copy_data.image_format = match first_texture.format {
                         gltf::image::Format::R8 => ash::vk::Format::R8_UNORM,
                         gltf::image::Format::R8G8 => ash::vk::Format::R8G8_UNORM,
                         gltf::image::Format::R8G8B8 => ash::vk::Format::R8G8B8_UNORM,
@@ -238,16 +245,13 @@ impl ModelReader for GltfModelReader {
                         gltf::image::Format::R16G16B16 => ash::vk::Format::R16G16B16_UNORM,
                         gltf::image::Format::R16G16B16A16 => ash::vk::Format::R16G16B16A16_UNORM,
                     };
-                    copy_data.textures_size = Vec::new();
+                    copy_data.image_size = 0;
                     for texture_type in &texture_flags {
                         let texture_to_copy =
                             *primitive.textures.get(texture_type).unwrap_or_else(|| {
                                 panic!("Texture type {:?} not found in model", texture_type)
                             });
                         unsafe {
-                            copy_data
-                                .textures_size
-                                .push((*texture_to_copy).pixels.len() as u64);
                             if !dst_ptr.is_null() {
                                 std::ptr::copy_nonoverlapping(
                                     (*texture_to_copy).pixels.as_ptr(),
@@ -258,6 +262,7 @@ impl ModelReader for GltfModelReader {
                             written_bytes += (*texture_to_copy).pixels.len() as u64;
                         }
                     }
+                    copy_data.image_size = written_bytes - copy_data.image_buffer_offset;
                 }
                 copy_data
             })
@@ -325,13 +330,13 @@ impl ModelReader for GltfModelReader {
         /* assume xspan biggest */
         let mut maxspan = xspan;
 
-        if (yspan > maxspan) {
+        if yspan > maxspan {
             maxspan = yspan;
             dia1 = ymin;
             dia2 = ymax;
         }
 
-        if (zspan > maxspan) {
+        if zspan > maxspan {
             dia1 = zmin;
             dia2 = zmax;
         }
@@ -361,7 +366,7 @@ impl ModelReader for GltfModelReader {
             for vertex in vertices {
                 let delta: Vector3<f32> = vertex - center;
                 let old_to_p_sq = delta.magnitude_squared();
-                if (old_to_p_sq > m_radius2)
+                if old_to_p_sq > m_radius2
                 /* do r**2 test first */
                 {
                     /* this point is outside of current sphere */
@@ -815,7 +820,7 @@ mod tests {
                     res.access_primitive_data()
                         .get(0)
                         .unwrap()
-                        .textures_buffer_offset as usize,
+                        .image_buffer_offset as usize,
                 ) as *const u8,
                 4,
             )
