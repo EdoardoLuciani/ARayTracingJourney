@@ -37,6 +37,7 @@ pub unsafe fn clone_vk_physical_device_features2_structure(
         let cloned_child_struct_ptr = allocate_struct!(match (*(source_ptr as *const vk::PhysicalDeviceFeatures2)).s_type; {
             vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_1_FEATURES => vk::PhysicalDeviceVulkan11Features,
             vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_2_FEATURES => vk::PhysicalDeviceVulkan12Features,
+            vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_3_FEATURES => vk::PhysicalDeviceVulkan13Features,
             vk::StructureType::PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT => vk::PhysicalDeviceDescriptorIndexingFeatures,
             vk::StructureType::PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR => vk::PhysicalDeviceSynchronization2FeaturesKHR,
             vk::StructureType::PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES => vk::PhysicalDeviceImagelessFramebufferFeatures,
@@ -80,6 +81,7 @@ pub unsafe fn destroy_vk_physical_device_features2(source: &mut vk::PhysicalDevi
         free_struct_and_advance!(match (*(p_next as *const vk::PhysicalDeviceFeatures2)).s_type; {
             vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_1_FEATURES => vk::PhysicalDeviceVulkan11Features,
             vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_2_FEATURES => vk::PhysicalDeviceVulkan12Features,
+            vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_3_FEATURES => vk::PhysicalDeviceVulkan13Features,
             vk::StructureType::PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT => vk::PhysicalDeviceDescriptorIndexingFeaturesEXT,
             vk::StructureType::PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR => vk::PhysicalDeviceSynchronization2FeaturesKHR,
             vk::StructureType::PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES => vk::PhysicalDeviceImagelessFramebufferFeatures,
@@ -158,6 +160,7 @@ pub unsafe fn compare_vk_physical_device_features2(
         let res = compare_structs!(match (*(baseline_ptr as *const vk::PhysicalDeviceFeatures2)).s_type; {
             vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_1_FEATURES => vk::PhysicalDeviceVulkan11Features,
             vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_2_FEATURES => vk::PhysicalDeviceVulkan12Features,
+            vk::StructureType::PHYSICAL_DEVICE_VULKAN_1_3_FEATURES => vk::PhysicalDeviceVulkan13Features,
             vk::StructureType::PHYSICAL_DEVICE_DESCRIPTOR_INDEXING_FEATURES_EXT => vk::PhysicalDeviceDescriptorIndexingFeaturesEXT,
             vk::StructureType::PHYSICAL_DEVICE_SYNCHRONIZATION_2_FEATURES_KHR => vk::PhysicalDeviceSynchronization2FeaturesKHR,
             vk::StructureType::PHYSICAL_DEVICE_IMAGELESS_FRAMEBUFFER_FEATURES => vk::PhysicalDeviceImagelessFramebufferFeatures,

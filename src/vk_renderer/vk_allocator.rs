@@ -25,6 +25,7 @@ impl<'a> VkAllocator<'a> {
         let mesh_suballocator = VkBuffersSubAllocator::new(
             allocator.clone(),
             vk::BufferUsageFlags::TRANSFER_DST
+                | vk::BufferUsageFlags::TRANSFER_SRC
                 | vk::BufferUsageFlags::VERTEX_BUFFER
                 | vk::BufferUsageFlags::INDEX_BUFFER,
             MemoryLocation::GpuOnly,
