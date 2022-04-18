@@ -125,7 +125,7 @@ impl<'a> VkBuffersSubAllocator<'a> {
             .get_allocation()
             .mapped_ptr()
             .map(|host_address| unsafe {
-                NonNull::new_unchecked(host_address.as_ptr().add(buffer_offset))
+                NonNull::new(host_address.as_ptr().add(buffer_offset)).unwrap()
             });
         let device_ptr = self.buffer_units[&buffer]
             .buffer_allocation

@@ -229,7 +229,7 @@ impl ModelReader for GltfModelReader {
                         / (copy_data.image_extent.width
                             * copy_data.image_extent.height
                             * copy_data.image_extent.depth) as usize;
-                    written_bytes = get_aligned_offset(written_bytes, component_size as u64);
+                    written_bytes = align_offset(written_bytes, component_size as u64);
                     copy_data.image_buffer_offset = written_bytes;
                     copy_data.image_mip_levels = 1;
                     copy_data.image_layers = texture_flags.len() as u32;
@@ -774,12 +774,10 @@ mod tests {
 
         let first_vertex_view = unsafe {
             std::slice::from_raw_parts(
-                vec_data.as_ptr().add(
-                    res.access_primitive_data()
-                        .get(0)
-                        .unwrap()
-                        .mesh_buffer_offset as usize,
-                ) as *const f32,
+                vec_data
+                    .as_ptr()
+                    .add(res.get_primitive_data().get(0).unwrap().mesh_buffer_offset as usize)
+                    as *const f32,
                 12,
             )
         };
@@ -804,7 +802,7 @@ mod tests {
         let first_indices = unsafe {
             std::slice::from_raw_parts(
                 vec_data.as_ptr().add(
-                    res.access_primitive_data()
+                    res.get_primitive_data()
                         .get(0)
                         .unwrap()
                         .indices_buffer_offset as usize,
@@ -816,12 +814,10 @@ mod tests {
 
         let first_texture_pixels = unsafe {
             std::slice::from_raw_parts(
-                vec_data.as_ptr().add(
-                    res.access_primitive_data()
-                        .get(0)
-                        .unwrap()
-                        .image_buffer_offset as usize,
-                ) as *const u8,
+                vec_data
+                    .as_ptr()
+                    .add(res.get_primitive_data().get(0).unwrap().image_buffer_offset as usize)
+                    as *const u8,
                 4,
             )
         };

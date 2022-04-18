@@ -78,7 +78,7 @@ impl ModelCopyInfo {
         }
     }
 
-    pub fn access_primitive_data(&self) -> &[PrimitiveCopyInfo] {
+    pub fn get_primitive_data(&self) -> &[PrimitiveCopyInfo] {
         self.primitives_copy_data.as_slice()
     }
 
@@ -92,7 +92,7 @@ impl ModelCopyInfo {
         size as usize
     }
 
-    pub fn compute_total_mesh_size(&self) -> usize {
+    pub fn compute_mesh_and_indices_size(&self) -> usize {
         let mut size = 0;
         for primitive_copy_data in &self.primitives_copy_data {
             size += primitive_copy_data.mesh_size;
@@ -119,9 +119,28 @@ impl Sphere {
     pub fn get_radius(&self) -> f32 {
         self.radius
     }
+
+    pub fn get_distance_from_point(&self, point: Vector3<f32>) -> f32 {
+        (self.center - point).magnitude() - self.radius
+    }
+
+    pub fn transform(&self, m_transform: Matrix4<f32>) -> Sphere {
+        let center = Vector4::<f32>::new(self.center.x, self.center.y, self.center.z, 1.0f32);
+
+        let vec_scale2 = Vector3::new(
+            m_transform.column(0).magnitude(),
+            m_transform.column(1).magnitude(),
+            m_transform.column(2).magnitude(),
+        );
+        let max_scale = vec_scale2.max().sqrt();
+        Sphere {
+            center: (m_transform * center).xyz(),
+            radius: max_scale * self.radius,
+        }
+    }
 }
 
-pub fn get_aligned_offset(offset: u64, alignment: u64) -> u64 {
+pub fn align_offset(offset: u64, alignment: u64) -> u64 {
     alignment * ((offset as f32 / alignment as f32).ceil() as u64)
 }
 

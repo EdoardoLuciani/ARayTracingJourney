@@ -382,6 +382,10 @@ impl VkBase {
         &self.device
     }
 
+    pub fn queue_family_index(&self) -> u32 {
+        self.queue_family_index
+    }
+
     pub fn queues(&self) -> &[vk::Queue] {
         self.queues.as_slice()
     }
