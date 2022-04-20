@@ -1,9 +1,7 @@
 use super::vk_buffers_suballocator::VkBuffersSubAllocator;
 use ash::vk;
 use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
-use std::ops::{Deref, DerefMut};
 use std::rc::Rc;
 
 pub struct VkAllocator<'a> {

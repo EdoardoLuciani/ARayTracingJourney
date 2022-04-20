@@ -282,7 +282,7 @@ impl<'a> VkBuffersSubAllocator<'a> {
 
         let buffer = buffer_allocation.get_buffer();
         let buffer_unit_data = BufferUnitData {
-            buffer_allocation: buffer_allocation,
+            buffer_allocation,
             free_blocks: BTreeMap::from([(buffer_size, HashSet::from([0]))]),
         };
         self.buffer_units.insert(buffer, buffer_unit_data);
@@ -341,7 +341,7 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
+        let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
             &bvk.device(),
             *bvk.physical_device(),
@@ -389,7 +389,7 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
+        let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
             &bvk.device(),
             *bvk.physical_device(),
@@ -428,7 +428,7 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let mut resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
+        let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
             &bvk.device(),
             *bvk.physical_device(),

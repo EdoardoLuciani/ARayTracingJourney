@@ -1,6 +1,5 @@
-use super::model_reader::model_reader::ModelReader;
 use super::vk_boot::*;
-use ash::{extensions::*, vk};
+use ash::vk;
 use nalgebra::*;
 
 struct FrameData {

@@ -17,9 +17,9 @@ use crate::{GltfModelReader, MeshAttributeType, TextureType};
 
 // Trait for managing the state of the model from disk <-> host <-> device
 trait VkModelTransferLocation {
-    fn to_disk(self: Box<Self>, vk_model: &mut VkModel) {}
-    fn to_host(self: Box<Self>, vk_model: &mut VkModel) {}
-    fn to_device(self: Box<Self>, vk_model: &mut VkModel) {}
+    fn to_disk(self: Box<Self>, _vk_model: &mut VkModel) {}
+    fn to_host(self: Box<Self>, _vk_model: &mut VkModel) {}
+    fn to_device(self: Box<Self>, _vk_model: &mut VkModel) {}
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -483,7 +483,7 @@ impl<'a> VkModel<'a> {
             .get_allocator_mut()
             .allocate_buffer(&buffer_create_info, MemoryLocation::CpuToGpu);
 
-        let mut image_memory_barriers = device_primitives_info
+        let image_memory_barriers = device_primitives_info
             .iter()
             .map(|device_primitive_info| {
                 vk::ImageMemoryBarrier2::builder()
