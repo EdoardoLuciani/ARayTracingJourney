@@ -1,11 +1,9 @@
-use ash::extensions::khr;
 use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use ash::vk;
-use ash::vk::BufferCopy;
+use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
 use nalgebra::*;
 
@@ -69,13 +67,29 @@ impl VkModelTransferLocation for Host {
             .borrow_mut()
             .get_host_uniform_sub_allocator_mut()
             .allocate(std::mem::size_of::<VkModelUniform>(), 1);
-        vk_model.uniform.serialize(
+        vk_model.uniform.copy(
             host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr() as *mut VkModelUniform
         );
+
+        let (acceleration_structure, device_acceleration_structure_buffer) =
+            match vk_model.acceleration_structure_fn.is_some() {
+                true => {
+                    let res = vk_model.create_blas(
+                        &mesh_sub_allocation_data,
+                        &primitives_info,
+                        host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr(),
+                    );
+                    (Some(res.0), Some(res.1))
+                }
+                _ => (None, None),
+            };
+
         vk_model.state = Some(Box::new(Device {
             device_mesh_sub_allocation: mesh_sub_allocation_data,
             host_uniform_sub_allocation,
             device_primitives_info: primitives_info,
+            acceleration_structure,
+            device_acceleration_structure_buffer,
         }));
     }
 
@@ -120,29 +134,34 @@ struct Device {
     device_mesh_sub_allocation: SubAllocationData,
     host_uniform_sub_allocation: SubAllocationData,
     device_primitives_info: Vec<DevicePrimitiveInfo>,
+    acceleration_structure: Option<vk::AccelerationStructureKHR>,
+    device_acceleration_structure_buffer: Option<BufferAllocation>,
 }
 
 impl VkModelTransferLocation for Device {
     fn to_disk(mut self: Box<Device>, vk_model: &mut VkModel) {
-        vk_model
-            .allocator
-            .as_ref()
-            .borrow_mut()
+        let mut allocator = vk_model.allocator.as_ref().borrow_mut();
+        allocator
             .get_device_mesh_indices_sub_allocator_mut()
             .free(self.device_mesh_sub_allocation);
-        vk_model
-            .allocator
-            .as_ref()
-            .borrow_mut()
+        allocator
             .get_host_uniform_sub_allocator_mut()
             .free(self.host_uniform_sub_allocation);
+        if let Some(buffer) = self.device_acceleration_structure_buffer {
+            allocator.get_allocator_mut().destroy_buffer(buffer);
+        }
+        if let Some(acceleration_structure) = self.acceleration_structure {
+            unsafe {
+                vk_model
+                    .acceleration_structure_fn
+                    .unwrap()
+                    .destroy_acceleration_structure(acceleration_structure, None);
+            }
+        }
         self.device_primitives_info
             .drain(0..)
             .for_each(|primitive_info| {
-                vk_model
-                    .allocator
-                    .as_ref()
-                    .borrow_mut()
+                allocator
                     .get_allocator_mut()
                     .destroy_image(primitive_info.image);
             });
@@ -150,12 +169,24 @@ impl VkModelTransferLocation for Device {
     }
 
     fn to_host(self: Box<Device>, vk_model: &mut VkModel) {
-        vk_model
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_host_uniform_sub_allocator_mut()
-            .free(self.host_uniform_sub_allocation);
+        {
+            let mut allocator = vk_model.allocator.as_ref().borrow_mut();
+            allocator
+                .get_host_uniform_sub_allocator_mut()
+                .free(self.host_uniform_sub_allocation);
+            if let Some(buffer) = self.device_acceleration_structure_buffer {
+                allocator.get_allocator_mut().destroy_buffer(buffer);
+            }
+            if let Some(acceleration_structure) = self.acceleration_structure {
+                unsafe {
+                    vk_model
+                        .acceleration_structure_fn
+                        .unwrap()
+                        .destroy_acceleration_structure(acceleration_structure, None);
+                }
+            }
+        }
+
         vk_model.state = Some(vk_model.transfer_from_device_to_host(
             self.device_mesh_sub_allocation,
             self.device_primitives_info,
@@ -168,14 +199,14 @@ impl VkModelTransferLocation for Device {
 }
 
 trait VkModelPostSubmissionCleanup {
-    fn cleanup(self: Box<Self>, vk_model: &mut VkModel);
+    fn cleanup(self: Box<Self>, vk_model: &VkModel);
 }
 
-struct HostToDevice {
+struct HostToDeviceTransfer {
     host_buffer_allocation: BufferAllocation,
 }
-impl VkModelPostSubmissionCleanup for HostToDevice {
-    fn cleanup(self: Box<HostToDevice>, vk_model: &mut VkModel) {
+impl VkModelPostSubmissionCleanup for HostToDeviceTransfer {
+    fn cleanup(self: Box<HostToDeviceTransfer>, vk_model: &VkModel) {
         vk_model
             .allocator
             .as_ref()
@@ -185,12 +216,12 @@ impl VkModelPostSubmissionCleanup for HostToDevice {
     }
 }
 
-struct DeviceToHost {
+struct DeviceToHostTransfer {
     device_mesh_sub_allocation: SubAllocationData,
     device_images: Vec<ImageAllocation>,
 }
-impl VkModelPostSubmissionCleanup for DeviceToHost {
-    fn cleanup(mut self: Box<DeviceToHost>, vk_model: &mut VkModel) {
+impl VkModelPostSubmissionCleanup for DeviceToHostTransfer {
+    fn cleanup(mut self: Box<DeviceToHostTransfer>, vk_model: &VkModel) {
         vk_model
             .allocator
             .as_ref()
@@ -209,6 +240,20 @@ impl VkModelPostSubmissionCleanup for DeviceToHost {
     }
 }
 
+struct BlasBuild {
+    scratch_buffer: BufferAllocation,
+}
+impl VkModelPostSubmissionCleanup for BlasBuild {
+    fn cleanup(self: Box<Self>, vk_model: &VkModel) {
+        vk_model
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_allocator_mut()
+            .destroy_buffer(self.scratch_buffer);
+    }
+}
+
 struct VkModel<'a> {
     device: &'a ash::Device,
     acceleration_structure_fn: Option<&'a khr::AccelerationStructure>,
@@ -219,7 +264,7 @@ struct VkModel<'a> {
     uniform: VkModelUniform,
     state: Option<Box<dyn VkModelTransferLocation>>,
     needs_cb_submit: bool,
-    post_cb_submit_cleanup: Option<Box<dyn VkModelPostSubmissionCleanup>>,
+    post_cb_submit_cleanups: Vec<Box<dyn VkModelPostSubmissionCleanup>>,
 }
 
 #[repr(C, packed)]
@@ -228,7 +273,7 @@ struct VkModelUniform {
 }
 
 impl VkModelUniform {
-    fn serialize(&self, dst_ptr: *mut VkModelUniform) {
+    fn copy(&self, dst_ptr: *mut VkModelUniform) {
         unsafe {
             (self as *const VkModelUniform)
                 .copy_to_nonoverlapping(dst_ptr, std::mem::size_of::<Self>())
@@ -255,7 +300,7 @@ impl<'a> VkModel<'a> {
             uniform: VkModelUniform { model_matrix },
             state: Some(Box::new(Disk {})),
             needs_cb_submit: false,
-            post_cb_submit_cleanup: None,
+            post_cb_submit_cleanups: Vec::new(),
         };
         if let Some(state) = model.state.take() {
             state.to_host(&mut model);
@@ -284,8 +329,8 @@ impl<'a> VkModel<'a> {
     }
 
     pub fn reset_command_buffer_submission_status(&mut self) {
-        if let Some(cleanup_struct) = self.post_cb_submit_cleanup.take() {
-            cleanup_struct.cleanup(self);
+        while let Some(elem) = self.post_cb_submit_cleanups.pop() {
+            elem.cleanup(self);
         }
         self.needs_cb_submit = false;
     }
@@ -372,7 +417,7 @@ impl<'a> VkModel<'a> {
             .collect::<Vec<ImageAllocation>>();
 
         // record the buffer copies
-        let mut buffer_copies = Vec::<BufferCopy>::new();
+        let mut buffer_copies = Vec::<vk::BufferCopy>::new();
 
         let mut destination_offset: u64 = device_mesh_sub_allocation.get_buffer_offset() as u64;
         for primitive_copy_info in host_model_copy_info.get_primitive_data() {
@@ -502,9 +547,10 @@ impl<'a> VkModel<'a> {
         .collect::<Vec<_>>();
 
         self.needs_cb_submit = true;
-        self.post_cb_submit_cleanup = Some(Box::new(HostToDevice {
-            host_buffer_allocation,
-        }));
+        self.post_cb_submit_cleanups
+            .push(Box::new(HostToDeviceTransfer {
+                host_buffer_allocation,
+            }));
 
         (device_mesh_sub_allocation, primitives_model_info)
     }
@@ -636,13 +682,14 @@ impl<'a> VkModel<'a> {
         }
 
         self.needs_cb_submit = true;
-        self.post_cb_submit_cleanup = Some(Box::new(DeviceToHost {
-            device_mesh_sub_allocation,
-            device_images: device_primitives_info
-                .drain(..)
-                .map(|elem| elem.image)
-                .collect::<Vec<_>>(),
-        }));
+        self.post_cb_submit_cleanups
+            .push(Box::new(DeviceToHostTransfer {
+                device_mesh_sub_allocation,
+                device_images: device_primitives_info
+                    .drain(..)
+                    .map(|elem| elem.image)
+                    .collect::<Vec<_>>(),
+            }));
 
         Box::new(Host {
             host_buffer_allocation,
@@ -652,12 +699,12 @@ impl<'a> VkModel<'a> {
 
     fn create_blas(
         &mut self,
-        device_mesh_sub_allocation: SubAllocationData,
+        device_mesh_sub_allocation: &SubAllocationData,
         device_primitives_info: &[DevicePrimitiveInfo],
-        host_uniform_address: *const u8,
-    ) {
+        host_uniform_address: *const std::ffi::c_void,
+    ) -> (vk::AccelerationStructureKHR, BufferAllocation) {
         let transform_address = vk::DeviceOrHostAddressConstKHR {
-            host_address: host_uniform_address as *const std::ffi::c_void,
+            host_address: host_uniform_address,
         };
 
         let as_geom_info = device_primitives_info
@@ -783,6 +830,9 @@ impl<'a> VkModel<'a> {
         }
 
         self.needs_cb_submit = true;
+        self.post_cb_submit_cleanups
+            .push(Box::new(BlasBuild { scratch_buffer }));
+        (as_build_info.dst_acceleration_structure, device_blas_buffer)
     }
 }
 
