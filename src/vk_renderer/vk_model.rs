@@ -1,3 +1,4 @@
+use ash::extensions::khr;
 use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
@@ -26,15 +27,16 @@ trait VkModelTransferLocation {
 struct Disk;
 impl VkModelTransferLocation for Disk {
     fn to_host(self: Box<Disk>, vk_model: &mut VkModel) {
-        let host = vk_model.transfer_from_disk_to_host();
-        vk_model.state = Some(host);
+        let (buffer_allocation, model_copy_info) = vk_model.transfer_from_disk_to_host();
+        vk_model.state = Some(Box::new(Host {
+            host_buffer_allocation: buffer_allocation,
+            host_model_copy_info: model_copy_info,
+        }));
     }
 
     fn to_device(self: Box<Disk>, vk_model: &mut VkModel) {
-        let host = vk_model.transfer_from_disk_to_host();
-        let device = vk_model
-            .transfer_from_host_to_device(host.host_buffer_allocation, host.host_model_copy_info);
-        vk_model.state = Some(device);
+        self.to_host(vk_model);
+        vk_model.state.take().unwrap().to_device(vk_model);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -59,9 +61,22 @@ impl VkModelTransferLocation for Host {
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel) {
-        let device = vk_model
+        let (mesh_sub_allocation_data, primitives_info) = vk_model
             .transfer_from_host_to_device(self.host_buffer_allocation, self.host_model_copy_info);
-        vk_model.state = Some(device);
+        let host_uniform_sub_allocation = vk_model
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_host_uniform_sub_allocator_mut()
+            .allocate(std::mem::size_of::<VkModelUniform>(), 1);
+        vk_model.uniform.serialize(
+            host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr() as *mut VkModelUniform
+        );
+        vk_model.state = Some(Box::new(Device {
+            device_mesh_sub_allocation: mesh_sub_allocation_data,
+            host_uniform_sub_allocation,
+            device_primitives_info: primitives_info,
+        }));
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -70,11 +85,11 @@ impl VkModelTransferLocation for Host {
 }
 
 struct DevicePrimitiveInfo {
-    mesh_buffer_offset: u64,
+    mesh_sub_allocation_offset: u64,
     mesh_size: u64,
     single_mesh_element_size: u32,
 
-    indices_buffer_offset: u64,
+    indices_sub_allocation_offset: u64,
     indices_size: u64,
     single_index_size: u32,
 
@@ -85,8 +100,25 @@ struct DevicePrimitiveInfo {
     image_layers: u32,
 }
 
+impl DevicePrimitiveInfo {
+    fn get_indices_type(&self) -> vk::IndexType {
+        match self.indices_size {
+            2 => vk::IndexType::UINT16,
+            4 => vk::IndexType::UINT32,
+            _ => {
+                panic!("Non standard index type")
+            }
+        }
+    }
+
+    fn get_triangles_count(&self) -> u64 {
+        (self.indices_size / self.single_index_size as u64) / 3
+    }
+}
+
 struct Device {
-    device_mesh_suballocation: SubAllocationData,
+    device_mesh_sub_allocation: SubAllocationData,
+    host_uniform_sub_allocation: SubAllocationData,
     device_primitives_info: Vec<DevicePrimitiveInfo>,
 }
 
@@ -97,7 +129,13 @@ impl VkModelTransferLocation for Device {
             .as_ref()
             .borrow_mut()
             .get_device_mesh_indices_sub_allocator_mut()
-            .free(self.device_mesh_suballocation);
+            .free(self.device_mesh_sub_allocation);
+        vk_model
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_host_uniform_sub_allocator_mut()
+            .free(self.host_uniform_sub_allocation);
         self.device_primitives_info
             .drain(0..)
             .for_each(|primitive_info| {
@@ -112,8 +150,14 @@ impl VkModelTransferLocation for Device {
     }
 
     fn to_host(self: Box<Device>, vk_model: &mut VkModel) {
+        vk_model
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_host_uniform_sub_allocator_mut()
+            .free(self.host_uniform_sub_allocation);
         vk_model.state = Some(vk_model.transfer_from_device_to_host(
-            self.device_mesh_suballocation,
+            self.device_mesh_sub_allocation,
             self.device_primitives_info,
         ));
     }
@@ -130,7 +174,6 @@ trait VkModelPostSubmissionCleanup {
 struct HostToDevice {
     host_buffer_allocation: BufferAllocation,
 }
-
 impl VkModelPostSubmissionCleanup for HostToDevice {
     fn cleanup(self: Box<HostToDevice>, vk_model: &mut VkModel) {
         vk_model
@@ -143,10 +186,9 @@ impl VkModelPostSubmissionCleanup for HostToDevice {
 }
 
 struct DeviceToHost {
-    device_mesh_suballocation: SubAllocationData,
+    device_mesh_sub_allocation: SubAllocationData,
     device_images: Vec<ImageAllocation>,
 }
-
 impl VkModelPostSubmissionCleanup for DeviceToHost {
     fn cleanup(mut self: Box<DeviceToHost>, vk_model: &mut VkModel) {
         vk_model
@@ -154,7 +196,7 @@ impl VkModelPostSubmissionCleanup for DeviceToHost {
             .as_ref()
             .borrow_mut()
             .get_device_mesh_indices_sub_allocator_mut()
-            .free(self.device_mesh_suballocation);
+            .free(self.device_mesh_sub_allocation);
 
         self.device_images.drain(..).for_each(|image_allocation| {
             vk_model
@@ -169,6 +211,7 @@ impl VkModelPostSubmissionCleanup for DeviceToHost {
 
 struct VkModel<'a> {
     device: &'a ash::Device,
+    acceleration_structure_fn: Option<&'a khr::AccelerationStructure>,
     allocator: Rc<RefCell<VkAllocator<'a>>>,
     transfer_command_buffer: vk::CommandBuffer,
     model_path: String,
@@ -179,20 +222,32 @@ struct VkModel<'a> {
     post_cb_submit_cleanup: Option<Box<dyn VkModelPostSubmissionCleanup>>,
 }
 
+#[repr(C, packed)]
 struct VkModelUniform {
-    model_matrix: Matrix4<f32>,
+    model_matrix: Matrix3x4<f32>,
+}
+
+impl VkModelUniform {
+    fn serialize(&self, dst_ptr: *mut VkModelUniform) {
+        unsafe {
+            (self as *const VkModelUniform)
+                .copy_to_nonoverlapping(dst_ptr, std::mem::size_of::<Self>())
+        }
+    }
 }
 
 impl<'a> VkModel<'a> {
     pub fn new(
         device: &'a ash::Device,
+        acceleration_structure_fn: Option<&'a khr::AccelerationStructure>,
         allocator: Rc<RefCell<VkAllocator<'a>>>,
         model_path: String,
-        model_matrix: Matrix4<f32>,
+        model_matrix: Matrix3x4<f32>,
         transfer_command_buffer: vk::CommandBuffer,
     ) -> Self {
         let mut model = VkModel {
             device,
+            acceleration_structure_fn,
             allocator,
             transfer_command_buffer,
             model_path,
@@ -235,7 +290,7 @@ impl<'a> VkModel<'a> {
         self.needs_cb_submit = false;
     }
 
-    fn transfer_from_disk_to_host(&mut self) -> Box<Host> {
+    fn transfer_from_disk_to_host(&mut self) -> (BufferAllocation, ModelCopyInfo) {
         let model = GltfModelReader::open(
             self.model_path.as_ref(),
             true,
@@ -275,18 +330,15 @@ impl<'a> VkModel<'a> {
             .as_ptr() as *mut u8;
         model.copy_model_data_to_ptr(mesh_attributes, texture_types, dst_ptr);
 
-        Box::new(Host {
-            host_buffer_allocation: transient_allocation,
-            host_model_copy_info: copy_info,
-        })
+        (transient_allocation, copy_info)
     }
 
     fn transfer_from_host_to_device(
         &mut self,
         host_buffer_allocation: BufferAllocation,
         host_model_copy_info: ModelCopyInfo,
-    ) -> Box<Device> {
-        let device_mesh_suballocation = self
+    ) -> (SubAllocationData, Vec<DevicePrimitiveInfo>) {
+        let device_mesh_sub_allocation = self
             .allocator
             .as_ref()
             .borrow_mut()
@@ -322,7 +374,7 @@ impl<'a> VkModel<'a> {
         // record the buffer copies
         let mut buffer_copies = Vec::<BufferCopy>::new();
 
-        let mut destination_offset: u64 = 0;
+        let mut destination_offset: u64 = device_mesh_sub_allocation.get_buffer_offset() as u64;
         for primitive_copy_info in host_model_copy_info.get_primitive_data() {
             // mesh buffer copy
             buffer_copies.push(vk::BufferCopy {
@@ -345,7 +397,7 @@ impl<'a> VkModel<'a> {
             self.device.cmd_copy_buffer(
                 self.transfer_command_buffer,
                 host_buffer_allocation.get_buffer(),
-                device_mesh_suballocation.get_buffer(),
+                device_mesh_sub_allocation.get_buffer(),
                 &buffer_copies,
             );
         }
@@ -373,10 +425,10 @@ impl<'a> VkModel<'a> {
             .collect::<Vec<_>>();
 
         unsafe {
-            let dependacy_info =
+            let dependency_info =
                 vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
             self.device
-                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependacy_info);
+                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependency_info);
         }
 
         // record the image copies
@@ -419,10 +471,10 @@ impl<'a> VkModel<'a> {
         });
 
         unsafe {
-            let dependacy_info =
+            let dependency_info =
                 vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
             self.device
-                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependacy_info);
+                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependency_info);
         }
 
         let primitives_model_info = itertools::izip!(
@@ -431,12 +483,14 @@ impl<'a> VkModel<'a> {
             device_images_allocations
         )
         .map(
-            |(host_copy_info, mesh_buffer_offset, image)| DevicePrimitiveInfo {
-                mesh_buffer_offset: mesh_buffer_offset[0].dst_offset,
-                mesh_size: mesh_buffer_offset[0].size,
+            |(host_copy_info, mesh_and_idx_buffer_copy, image)| DevicePrimitiveInfo {
+                mesh_sub_allocation_offset: mesh_and_idx_buffer_copy[0].dst_offset
+                    - device_mesh_sub_allocation.get_buffer_offset() as u64,
+                mesh_size: mesh_and_idx_buffer_copy[0].size,
                 single_mesh_element_size: host_copy_info.single_mesh_element_size,
-                indices_buffer_offset: mesh_buffer_offset[1].dst_offset,
-                indices_size: mesh_buffer_offset[1].size,
+                indices_sub_allocation_offset: mesh_and_idx_buffer_copy[1].dst_offset
+                    - device_mesh_sub_allocation.get_buffer_offset() as u64,
+                indices_size: mesh_and_idx_buffer_copy[1].size,
                 single_index_size: host_copy_info.single_index_size,
                 image,
                 image_format: host_copy_info.image_format,
@@ -452,15 +506,12 @@ impl<'a> VkModel<'a> {
             host_buffer_allocation,
         }));
 
-        Box::new(Device {
-            device_mesh_suballocation,
-            device_primitives_info: primitives_model_info,
-        })
+        (device_mesh_sub_allocation, primitives_model_info)
     }
 
     fn transfer_from_device_to_host(
         &mut self,
-        device_mesh_suballocation: SubAllocationData,
+        device_mesh_sub_allocation: SubAllocationData,
         mut device_primitives_info: Vec<DevicePrimitiveInfo>,
     ) -> Box<Host> {
         let host_buffer_size =
@@ -506,10 +557,10 @@ impl<'a> VkModel<'a> {
             .collect::<Vec<_>>();
 
         unsafe {
-            let dependacy_info =
+            let dependency_info =
                 vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
             self.device
-                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependacy_info);
+                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependency_info);
         }
 
         let mut destination_offset: u64 = 0;
@@ -518,13 +569,13 @@ impl<'a> VkModel<'a> {
         for device_primitive_info in device_primitives_info.iter() {
             // record the buffer copy
             buffer_copies.push(vk::BufferCopy {
-                src_offset: device_primitive_info.mesh_buffer_offset,
+                src_offset: device_primitive_info.mesh_sub_allocation_offset,
                 dst_offset: destination_offset,
                 size: device_primitive_info.mesh_size,
             });
             destination_offset += device_primitive_info.mesh_size;
             buffer_copies.push(vk::BufferCopy {
-                src_offset: device_primitive_info.indices_buffer_offset,
+                src_offset: device_primitive_info.indices_sub_allocation_offset,
                 dst_offset: destination_offset,
                 size: device_primitive_info.indices_size,
             });
@@ -578,7 +629,7 @@ impl<'a> VkModel<'a> {
         unsafe {
             self.device.cmd_copy_buffer(
                 self.transfer_command_buffer,
-                device_mesh_suballocation.get_buffer(),
+                device_mesh_sub_allocation.get_buffer(),
                 host_buffer_allocation.get_buffer(),
                 &buffer_copies,
             );
@@ -586,7 +637,7 @@ impl<'a> VkModel<'a> {
 
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanup = Some(Box::new(DeviceToHost {
-            device_mesh_suballocation,
+            device_mesh_sub_allocation,
             device_images: device_primitives_info
                 .drain(..)
                 .map(|elem| elem.image)
@@ -597,6 +648,141 @@ impl<'a> VkModel<'a> {
             host_buffer_allocation,
             host_model_copy_info: ModelCopyInfo::new(primitives_copy_data),
         })
+    }
+
+    fn create_blas(
+        &mut self,
+        device_mesh_sub_allocation: SubAllocationData,
+        device_primitives_info: &[DevicePrimitiveInfo],
+        host_uniform_address: *const u8,
+    ) {
+        let transform_address = vk::DeviceOrHostAddressConstKHR {
+            host_address: host_uniform_address as *const std::ffi::c_void,
+        };
+
+        let as_geom_info = device_primitives_info
+            .iter()
+            .map(|device_primitive_info| {
+                let vertices_address = vk::DeviceOrHostAddressConstKHR {
+                    device_address: device_mesh_sub_allocation.get_device_ptr().unwrap()
+                        + device_primitive_info.mesh_sub_allocation_offset,
+                };
+                let indices_address = vk::DeviceOrHostAddressConstKHR {
+                    device_address: device_mesh_sub_allocation.get_device_ptr().unwrap()
+                        + device_primitive_info.indices_sub_allocation_offset,
+                };
+
+                let acceleration_structure_geometry_triangles_data =
+                    vk::AccelerationStructureGeometryTrianglesDataKHR::builder()
+                        .vertex_format(vk::Format::R32G32B32_SFLOAT)
+                        .vertex_data(vertices_address)
+                        .vertex_stride(
+                            device_primitive_info.single_mesh_element_size as vk::DeviceSize,
+                        )
+                        .max_vertex(
+                            (device_primitive_info.mesh_size
+                                / device_primitive_info.single_mesh_element_size as u64)
+                                as u32,
+                        )
+                        .index_type(device_primitive_info.get_indices_type())
+                        .index_data(indices_address)
+                        .transform_data(transform_address)
+                        .build();
+                let acceleration_structure_geometry_data =
+                    vk::AccelerationStructureGeometryDataKHR {
+                        triangles: acceleration_structure_geometry_triangles_data,
+                    };
+                let acceleration_structure_geometry =
+                    vk::AccelerationStructureGeometryKHR::builder()
+                        .geometry_type(vk::GeometryTypeKHR::TRIANGLES)
+                        .geometry(acceleration_structure_geometry_data)
+                        .flags(vk::GeometryFlagsKHR::OPAQUE)
+                        .build();
+                acceleration_structure_geometry
+            })
+            .collect::<Vec<_>>();
+
+        let as_build_ranges = device_primitives_info
+            .iter()
+            .map(|device_primitive_info| {
+                vk::AccelerationStructureBuildRangeInfoKHR::builder()
+                    .primitive_count(device_primitive_info.get_triangles_count() as u32)
+                    .primitive_offset(0)
+                    .first_vertex(0)
+                    .transform_offset(0)
+                    .build()
+            })
+            .collect::<Vec<_>>();
+
+        let mut as_build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
+            .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
+            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
+            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+            .geometries(&as_geom_info)
+            .build();
+
+        let as_size_info = unsafe {
+            self.acceleration_structure_fn
+                .unwrap()
+                .get_acceleration_structure_build_sizes(
+                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
+                    &as_build_info,
+                    std::slice::from_ref(&(as_build_ranges.len() as u32)),
+                )
+        };
+
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(as_size_info.acceleration_structure_size)
+            .usage(
+                vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::STORAGE_BUFFER,
+            );
+        let device_blas_buffer = self
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_allocator_mut()
+            .allocate_buffer(&buffer_create_info, MemoryLocation::GpuOnly);
+
+        as_build_info.dst_acceleration_structure = unsafe {
+            let as_create_info = vk::AccelerationStructureCreateInfoKHR::builder()
+                .buffer(device_blas_buffer.get_buffer())
+                .offset(0)
+                .size(as_size_info.acceleration_structure_size)
+                .ty(as_build_info.ty);
+            self.acceleration_structure_fn
+                .unwrap()
+                .create_acceleration_structure(&as_create_info, None)
+                .unwrap()
+        };
+
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(as_size_info.build_scratch_size)
+            .usage(
+                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::STORAGE_BUFFER,
+            );
+        let scratch_buffer = self
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_allocator_mut()
+            .allocate_buffer(&buffer_create_info, MemoryLocation::GpuOnly);
+        as_build_info.scratch_data = vk::DeviceOrHostAddressKHR {
+            device_address: scratch_buffer.get_device_address().unwrap(),
+        };
+
+        unsafe {
+            self.acceleration_structure_fn
+                .unwrap()
+                .cmd_build_acceleration_structures(
+                    self.transfer_command_buffer,
+                    std::slice::from_ref(&as_build_info),
+                    &[&as_build_ranges],
+                );
+        }
+
+        self.needs_cb_submit = true;
     }
 }
 
@@ -675,9 +861,10 @@ mod tests {
 
         let mut water_bottle = VkModel::new(
             bvk.device(),
+            None,
             allocator.clone(),
             String::from("assets/models/WaterBottle.glb"),
-            Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)),
+            Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
             command_buffer,
         );
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());

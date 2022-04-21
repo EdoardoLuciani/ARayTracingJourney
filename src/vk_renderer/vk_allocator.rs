@@ -7,6 +7,7 @@ use std::rc::Rc;
 pub struct VkAllocator<'a> {
     allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
     device_mesh_indices_sub_allocator: VkBuffersSubAllocator<'a>,
+    host_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
 }
 
 impl<'a> VkAllocator<'a> {
@@ -30,9 +31,17 @@ impl<'a> VkAllocator<'a> {
             100_000_000,
             512,
         );
+        let uniforms_suballocator = VkBuffersSubAllocator::new(
+            allocator.clone(),
+            vk::BufferUsageFlags::UNIFORM_BUFFER,
+            MemoryLocation::CpuToGpu,
+            524_288,
+            256,
+        );
         VkAllocator {
             allocator,
             device_mesh_indices_sub_allocator: mesh_suballocator,
+            host_uniforms_sub_allocator: uniforms_suballocator
         }
     }
 
@@ -42,6 +51,10 @@ impl<'a> VkAllocator<'a> {
 
     pub fn get_device_mesh_indices_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
         &mut self.device_mesh_indices_sub_allocator
+    }
+
+    pub fn get_host_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
+        &mut self.host_uniforms_sub_allocator
     }
 }
 
