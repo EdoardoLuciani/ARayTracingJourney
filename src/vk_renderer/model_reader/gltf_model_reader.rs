@@ -198,8 +198,7 @@ impl ModelReader for GltfModelReader {
                             )
                         });
                     copy_data.indices_size = indices_data.buffer_data_len;
-                    copy_data.single_index_size =
-                        (copy_data.indices_size / indices_data.buffer_data_len) as u32;
+                    copy_data.single_index_size = indices_data.element_size;
                     unsafe {
                         if !dst_ptr.is_null() {
                             std::ptr::copy_nonoverlapping(
@@ -745,7 +744,7 @@ mod tests {
     }
 
     #[test]
-    fn text_textured_cube() {
+    fn test_textured_cube() {
         let sponza = GltfModelReader::open(
             "assets/models/TexturedCube.glb".as_ref(),
             true,

@@ -7,22 +7,26 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 trait PostSubmissionCleanup {
-    fn cleanup(self, allocator: Rc<RefCell<VkAllocator>>);
+    fn cleanup(self: Box<Self>, allocator: Rc<RefCell<VkAllocator>>);
 }
 
 struct TlasBuild {
-    scratch_buffer: BufferAllocation
+    scratch_buffer: BufferAllocation,
 }
 impl PostSubmissionCleanup for TlasBuild {
-    fn cleanup(self, allocator: Rc<RefCell<VkAllocator>>) {
-        allocator.as_ref().borrow_mut().get_allocator_mut().destroy_buffer(self.scratch_buffer);
+    fn cleanup(self: Box<Self>, allocator: Rc<RefCell<VkAllocator>>) {
+        allocator
+            .as_ref()
+            .borrow_mut()
+            .get_allocator_mut()
+            .destroy_buffer(self.scratch_buffer);
     }
 }
 
 struct VkTlasBuilder<'a> {
     acceleration_structure_fp: &'a khr::AccelerationStructure,
     allocator: Rc<RefCell<VkAllocator<'a>>>,
-    post_cb_submit_cleanup: Option<Box<dyn PostSubmissionCleanup>>
+    post_cb_submit_cleanup: Option<Box<dyn PostSubmissionCleanup>>,
 }
 
 impl<'a> VkTlasBuilder<'a> {
@@ -33,11 +37,15 @@ impl<'a> VkTlasBuilder<'a> {
         Self {
             acceleration_structure_fp,
             allocator,
-            post_cb_submit_cleanup: None
+            post_cb_submit_cleanup: None,
         }
     }
 
-    pub fn create_tlas(&mut self, cb: vk::CommandBuffer, blases: &[vk::AccelerationStructureKHR]) ->  {
+    pub fn create_tlas(
+        &mut self,
+        cb: vk::CommandBuffer,
+        blases: &[vk::AccelerationStructureKHR],
+    ) -> vk::AccelerationStructureKHR {
         // identity matrix
         let transform_matrix = TransformMatrixKHR {
             matrix: [
@@ -151,14 +159,20 @@ impl<'a> VkTlasBuilder<'a> {
                     &[std::slice::from_ref(&as_range_info)],
                 )
         }
-        self.post_cb_submit_cleanup = Some(Box::new(TlasBuild {
-            scratch_buffer
-        }))
+        self.post_cb_submit_cleanup = Some(Box::new(TlasBuild { scratch_buffer }));
+        tlas
     }
 
     pub fn post_submit_cleanup(&mut self) {
         if let Some(cleanup_box) = self.post_cb_submit_cleanup.take() {
-            cleanup_box.cleanup(self.allocator.clone())
+            cleanup_box.cleanup(self.allocator.clone());
         }
+    }
+}
+
+mod tests {
+    #[test]
+    fn tlas_build() {
+        
     }
 }

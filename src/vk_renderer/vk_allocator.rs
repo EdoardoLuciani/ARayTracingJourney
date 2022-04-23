@@ -26,7 +26,9 @@ impl<'a> VkAllocator<'a> {
             vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::TRANSFER_SRC
                 | vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER,
+                | vk::BufferUsageFlags::INDEX_BUFFER
+                | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
             MemoryLocation::GpuOnly,
             100_000_000,
             512,
@@ -41,7 +43,7 @@ impl<'a> VkAllocator<'a> {
         VkAllocator {
             allocator,
             device_mesh_indices_sub_allocator: mesh_suballocator,
-            host_uniforms_sub_allocator: uniforms_suballocator
+            host_uniforms_sub_allocator: uniforms_suballocator,
         }
     }
 

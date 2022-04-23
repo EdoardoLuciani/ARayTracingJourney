@@ -17,14 +17,14 @@ use crate::{GltfModelReader, MeshAttributeType, TextureType};
 // Trait for managing the state of the model from disk <-> host <-> device
 trait VkModelTransferLocation {
     fn to_disk(self: Box<Self>, _vk_model: &mut VkModel) {}
-    fn to_host(self: Box<Self>, _vk_model: &mut VkModel) {}
-    fn to_device(self: Box<Self>, _vk_model: &mut VkModel) {}
+    fn to_host(self: Box<Self>, _vk_model: &mut VkModel, cb: vk::CommandBuffer) {}
+    fn to_device(self: Box<Self>, _vk_model: &mut VkModel, cb: vk::CommandBuffer) {}
     fn as_any(&self) -> &dyn Any;
 }
 
 struct Disk;
 impl VkModelTransferLocation for Disk {
-    fn to_host(self: Box<Disk>, vk_model: &mut VkModel) {
+    fn to_host(self: Box<Disk>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
         let (buffer_allocation, model_copy_info) = vk_model.transfer_from_disk_to_host();
         vk_model.state = Some(Box::new(Host {
             host_buffer_allocation: buffer_allocation,
@@ -32,9 +32,9 @@ impl VkModelTransferLocation for Disk {
         }));
     }
 
-    fn to_device(self: Box<Disk>, vk_model: &mut VkModel) {
-        self.to_host(vk_model);
-        vk_model.state.take().unwrap().to_device(vk_model);
+    fn to_device(self: Box<Disk>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
+        self.to_host(vk_model, cb);
+        vk_model.state.take().unwrap().to_device(vk_model, cb);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -58,9 +58,12 @@ impl VkModelTransferLocation for Host {
         vk_model.state = Some(Box::new(Disk {}));
     }
 
-    fn to_device(self: Box<Host>, vk_model: &mut VkModel) {
-        let (mesh_sub_allocation_data, primitives_info) = vk_model
-            .transfer_from_host_to_device(self.host_buffer_allocation, self.host_model_copy_info);
+    fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
+        let (mesh_sub_allocation_data, primitives_info) = vk_model.transfer_from_host_to_device(
+            cb,
+            self.host_buffer_allocation,
+            self.host_model_copy_info,
+        );
         let host_uniform_sub_allocation = vk_model
             .allocator
             .as_ref()
@@ -75,6 +78,7 @@ impl VkModelTransferLocation for Host {
             match vk_model.acceleration_structure_fp.is_some() {
                 true => {
                     let res = vk_model.create_blas(
+                        cb,
                         &mesh_sub_allocation_data,
                         &primitives_info,
                         host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr(),
@@ -116,7 +120,7 @@ struct DevicePrimitiveInfo {
 
 impl DevicePrimitiveInfo {
     fn get_indices_type(&self) -> vk::IndexType {
-        match self.indices_size {
+        match self.single_index_size {
             2 => vk::IndexType::UINT16,
             4 => vk::IndexType::UINT32,
             _ => {
@@ -168,7 +172,7 @@ impl VkModelTransferLocation for Device {
         vk_model.state = Some(Box::new(Disk {}))
     }
 
-    fn to_host(self: Box<Device>, vk_model: &mut VkModel) {
+    fn to_host(self: Box<Device>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
         {
             let mut allocator = vk_model.allocator.as_ref().borrow_mut();
             allocator
@@ -188,6 +192,7 @@ impl VkModelTransferLocation for Device {
         }
 
         vk_model.state = Some(vk_model.transfer_from_device_to_host(
+            cb,
             self.device_mesh_sub_allocation,
             self.device_primitives_info,
         ));
@@ -258,7 +263,6 @@ struct VkModel<'a> {
     device: &'a ash::Device,
     acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
     allocator: Rc<RefCell<VkAllocator<'a>>>,
-    transfer_command_buffer: vk::CommandBuffer,
     model_path: String,
     model_bounding_sphere: Option<Sphere>,
     uniform: VkModelUniform,
@@ -288,13 +292,11 @@ impl<'a> VkModel<'a> {
         allocator: Rc<RefCell<VkAllocator<'a>>>,
         model_path: String,
         model_matrix: Matrix3x4<f32>,
-        transfer_command_buffer: vk::CommandBuffer,
     ) -> Self {
         let mut model = VkModel {
             device,
             acceleration_structure_fp,
             allocator,
-            transfer_command_buffer,
             model_path,
             model_bounding_sphere: None,
             uniform: VkModelUniform { model_matrix },
@@ -303,12 +305,14 @@ impl<'a> VkModel<'a> {
             post_cb_submit_cleanups: Vec::new(),
         };
         if let Some(state) = model.state.take() {
-            state.to_host(&mut model);
+            // passing a null command buffer is acceptable here since we know the initial
+            // state is disk, and disk -> host does not require a submission
+            state.to_host(&mut model, vk::CommandBuffer::null());
         }
         model
     }
 
-    pub fn update_model_status(&mut self, camera_pos: &Vector3<f32>) {
+    pub fn update_model_status(&mut self, camera_pos: &Vector3<f32>, cb: vk::CommandBuffer) {
         let distance = self
             .model_bounding_sphere
             .as_ref()
@@ -318,8 +322,8 @@ impl<'a> VkModel<'a> {
 
         let state = self.state.take().unwrap();
         match distance {
-            x if x <= 10f32 => state.to_device(self),
-            x if x <= 20f32 => state.to_host(self),
+            x if x <= 10f32 => state.to_device(self, cb),
+            x if x <= 20f32 => state.to_host(self, cb),
             _ => state.to_disk(self),
         };
     }
@@ -380,6 +384,7 @@ impl<'a> VkModel<'a> {
 
     fn transfer_from_host_to_device(
         &mut self,
+        cb: vk::CommandBuffer,
         host_buffer_allocation: BufferAllocation,
         host_model_copy_info: ModelCopyInfo,
     ) -> (SubAllocationData, Vec<DevicePrimitiveInfo>) {
@@ -440,7 +445,7 @@ impl<'a> VkModel<'a> {
 
         unsafe {
             self.device.cmd_copy_buffer(
-                self.transfer_command_buffer,
+                cb,
                 host_buffer_allocation.get_buffer(),
                 device_mesh_sub_allocation.get_buffer(),
                 &buffer_copies,
@@ -472,8 +477,7 @@ impl<'a> VkModel<'a> {
         unsafe {
             let dependency_info =
                 vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
-            self.device
-                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependency_info);
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
         // record the image copies
@@ -497,7 +501,7 @@ impl<'a> VkModel<'a> {
 
             unsafe {
                 self.device.cmd_copy_buffer_to_image(
-                    self.transfer_command_buffer,
+                    cb,
                     host_buffer_allocation.get_buffer(),
                     device_image_allocation.get_image(),
                     vk::ImageLayout::TRANSFER_DST_OPTIMAL,
@@ -518,8 +522,7 @@ impl<'a> VkModel<'a> {
         unsafe {
             let dependency_info =
                 vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
-            self.device
-                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependency_info);
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
         let primitives_model_info = itertools::izip!(
@@ -557,6 +560,7 @@ impl<'a> VkModel<'a> {
 
     fn transfer_from_device_to_host(
         &mut self,
+        cb: vk::CommandBuffer,
         device_mesh_sub_allocation: SubAllocationData,
         mut device_primitives_info: Vec<DevicePrimitiveInfo>,
     ) -> Box<Host> {
@@ -605,8 +609,7 @@ impl<'a> VkModel<'a> {
         unsafe {
             let dependency_info =
                 vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
-            self.device
-                .cmd_pipeline_barrier2(self.transfer_command_buffer, &dependency_info);
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
         let mut destination_offset: u64 = 0;
@@ -645,7 +648,7 @@ impl<'a> VkModel<'a> {
 
             unsafe {
                 self.device.cmd_copy_image_to_buffer(
-                    self.transfer_command_buffer,
+                    cb,
                     device_primitive_info.image.get_image(),
                     vk::ImageLayout::TRANSFER_SRC_OPTIMAL,
                     host_buffer_allocation.get_buffer(),
@@ -674,7 +677,7 @@ impl<'a> VkModel<'a> {
 
         unsafe {
             self.device.cmd_copy_buffer(
-                self.transfer_command_buffer,
+                cb,
                 device_mesh_sub_allocation.get_buffer(),
                 host_buffer_allocation.get_buffer(),
                 &buffer_copies,
@@ -699,6 +702,7 @@ impl<'a> VkModel<'a> {
 
     fn create_blas(
         &mut self,
+        cb: vk::CommandBuffer,
         device_mesh_sub_allocation: &SubAllocationData,
         device_primitives_info: &[DevicePrimitiveInfo],
         host_uniform_address: *const std::ffi::c_void,
@@ -765,6 +769,7 @@ impl<'a> VkModel<'a> {
             .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
             .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
+            .src_acceleration_structure(vk::AccelerationStructureKHR::null())
             .geometries(&as_geom_info)
             .build();
 
@@ -820,10 +825,19 @@ impl<'a> VkModel<'a> {
         };
 
         unsafe {
+            let memory_barrier = vk::MemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .dst_access_mask(vk::AccessFlags2::MEMORY_READ);
+            let dependancy_info = vk::DependencyInfo::builder()
+                .memory_barriers(std::slice::from_ref(&memory_barrier));
+            self.device.cmd_pipeline_barrier2(cb, &dependancy_info);
+
             self.acceleration_structure_fp
                 .unwrap()
                 .cmd_build_acceleration_structures(
-                    self.transfer_command_buffer,
+                    cb,
                     std::slice::from_ref(&as_build_info),
                     &[&as_build_ranges],
                 );
@@ -887,6 +901,15 @@ mod tests {
             bvk.physical_device().clone(),
         )));
 
+        let mut water_bottle = VkModel::new(
+            bvk.device(),
+            None,
+            allocator.clone(),
+            String::from("assets/models/WaterBottle.glb"),
+            Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
+        );
+        assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
+
         let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
             .command_pool(command_pool)
             .level(vk::CommandBufferLevel::PRIMARY)
@@ -909,21 +932,11 @@ mod tests {
         let fence_create_info = vk::FenceCreateInfo::default();
         let fence = unsafe { bvk.device().create_fence(&fence_create_info, None).unwrap() };
 
-        let mut water_bottle = VkModel::new(
-            bvk.device(),
-            None,
-            allocator.clone(),
-            String::from("assets/models/WaterBottle.glb"),
-            Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
-            command_buffer,
-        );
-        assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
-
-        water_bottle.update_model_status(&Vector3::from_element(100.0f32));
+        water_bottle.update_model_status(&Vector3::from_element(100.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Disk>());
         assert!(!water_bottle.needs_command_buffer_submission());
 
-        water_bottle.update_model_status(&Vector3::from_element(7.0f32));
+        water_bottle.update_model_status(&Vector3::from_element(7.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
         assert!(!water_bottle.needs_command_buffer_submission());
 
@@ -949,7 +962,7 @@ mod tests {
             }
         };
 
-        water_bottle.update_model_status(&Vector3::from_element(3.0f32));
+        water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
         assert!(water_bottle.needs_command_buffer_submission());
 
@@ -984,7 +997,7 @@ mod tests {
                 .unwrap();
         };
 
-        water_bottle.update_model_status(&Vector3::from_element(7.0f32));
+        water_bottle.update_model_status(&Vector3::from_element(7.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
         assert!(water_bottle.needs_command_buffer_submission());
 
@@ -1050,118 +1063,118 @@ mod tests {
 
     #[test]
     fn test_water_bottle_blas() {
-        fn test_water_bottle() {
-            let mut vulkan_12_features =
-                vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
-            let mut vulkan_13_features =
-                vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
-            let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
-                .push_next(&mut vulkan_13_features)
-                .push_next(&mut vulkan_12_features);
-            let bvk = VkBase::new(
-                "",
-                &[],
-                &["VK_KHR_acceleration_structure"],
-                &physical_device_features2,
-                &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
-                None,
-            );
-            let acceleration_structure_fp =
-                khr::AccelerationStructure::new(bvk.instance(), bvk.device());
+        let mut vulkan_ray_tracing_pipeline =
+            vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(true);
+        let mut vulkan_acceleration_structure =
+            vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
+                .acceleration_structure(true);
+        let mut vulkan_12_features =
+            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+        let mut vulkan_13_features =
+            vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
+        let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
+            .push_next(&mut vulkan_13_features)
+            .push_next(&mut vulkan_12_features)
+            .push_next(&mut vulkan_acceleration_structure)
+            .push_next(&mut vulkan_ray_tracing_pipeline);
+        let bvk = VkBase::new(
+            "",
+            &[],
+            &[
+                "VK_KHR_acceleration_structure",
+                "VK_KHR_deferred_host_operations",
+            ],
+            &physical_device_features2,
+            &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
+            None,
+        );
+        let acceleration_structure_fp =
+            khr::AccelerationStructure::new(bvk.instance(), bvk.device());
 
-            let command_pool_create_info =
-                vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.queue_family_index());
-            let command_pool = unsafe {
-                bvk.device()
-                    .create_command_pool(&command_pool_create_info, None)
-                    .unwrap()
-            };
+        let allocator = Rc::new(RefCell::new(VkAllocator::new(
+            bvk.instance().clone(),
+            bvk.device(),
+            bvk.physical_device().clone(),
+        )));
+        let mut water_bottle = VkModel::new(
+            bvk.device(),
+            Some(&acceleration_structure_fp),
+            allocator.clone(),
+            String::from("assets/models/WaterBottle.glb"),
+            Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
+        );
+        assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
 
-            let allocator = Rc::new(RefCell::new(VkAllocator::new(
-                bvk.instance().clone(),
-                bvk.device(),
-                bvk.physical_device().clone(),
-            )));
-
-            let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
-                .command_pool(command_pool)
-                .level(vk::CommandBufferLevel::PRIMARY)
-                .command_buffer_count(1);
-            let command_buffer = unsafe {
-                bvk.device()
-                    .allocate_command_buffers(&command_buffer_create_info)
-                    .unwrap()
-                    .first()
-                    .unwrap()
-                    .clone()
-            };
-            unsafe {
-                let begin_command_buffer = vk::CommandBufferBeginInfo::default();
-                bvk.device()
-                    .begin_command_buffer(command_buffer, &begin_command_buffer)
-                    .unwrap();
-            };
-
-            let fence_create_info = vk::FenceCreateInfo::default();
-            let fence = unsafe { bvk.device().create_fence(&fence_create_info, None).unwrap() };
-
-            let mut water_bottle = VkModel::new(
-                bvk.device(),
-                Some(&acceleration_structure_fp),
-                allocator.clone(),
-                String::from("assets/models/WaterBottle.glb"),
-                Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32))
-                    .remove_row(3),
-                command_buffer,
-            );
-            assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
-
-            water_bottle.update_model_status(&Vector3::from_element(3.0f32));
-            assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
-            assert!(water_bottle.needs_command_buffer_submission());
-
-            let command_buffer_submit_info =
-                vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer);
-            let queue_submit2 = vk::SubmitInfo2::builder()
-                .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
-            unsafe {
-                bvk.device().end_command_buffer(command_buffer).unwrap();
-
-                bvk.device()
-                    .queue_submit2(
-                        *bvk.queues().first().unwrap(),
-                        std::slice::from_ref(&queue_submit2),
-                        fence,
-                    )
-                    .unwrap();
-
-                bvk.device()
-                    .wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)
-                    .unwrap();
-                bvk.device()
-                    .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
-                    .unwrap();
-            }
-            water_bottle.reset_command_buffer_submission_status();
-
-            assert!(water_bottle
-                .state
-                .as_ref()
+        let command_pool_create_info =
+            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.queue_family_index());
+        let command_pool = unsafe {
+            bvk.device()
+                .create_command_pool(&command_pool_create_info, None)
                 .unwrap()
-                .as_any()
-                .downcast_ref::<Device>()
+        };
+        let command_buffer_create_info = vk::CommandBufferAllocateInfo::builder()
+            .command_pool(command_pool)
+            .level(vk::CommandBufferLevel::PRIMARY)
+            .command_buffer_count(1);
+        let command_buffer = unsafe {
+            bvk.device()
+                .allocate_command_buffers(&command_buffer_create_info)
                 .unwrap()
-                .device_acceleration_structure_buffer
-                .is_some());
-            assert!(water_bottle
-                .state
-                .as_ref()
+                .first()
                 .unwrap()
-                .as_any()
-                .downcast_ref::<Device>()
-                .unwrap()
-                .acceleration_structure
-                .is_some());
+                .clone()
+        };
+        unsafe {
+            let begin_command_buffer = vk::CommandBufferBeginInfo::default();
+            bvk.device()
+                .begin_command_buffer(command_buffer, &begin_command_buffer)
+                .unwrap();
+        };
+        let fence_create_info = vk::FenceCreateInfo::default();
+        let fence = unsafe { bvk.device().create_fence(&fence_create_info, None).unwrap() };
+
+        water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer);
+        assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
+        assert!(water_bottle.needs_command_buffer_submission());
+
+        let command_buffer_submit_info =
+            vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer);
+        let queue_submit2 = vk::SubmitInfo2::builder()
+            .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
+        unsafe {
+            bvk.device().end_command_buffer(command_buffer).unwrap();
+            bvk.device()
+                .queue_submit2(
+                    *bvk.queues().first().unwrap(),
+                    std::slice::from_ref(&queue_submit2),
+                    fence,
+                )
+                .unwrap();
+            bvk.device()
+                .wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)
+                .unwrap();
+            bvk.device()
+                .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
+                .unwrap();
         }
+        water_bottle.reset_command_buffer_submission_status();
+        assert!(water_bottle
+            .state
+            .as_ref()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Device>()
+            .unwrap()
+            .device_acceleration_structure_buffer
+            .is_some());
+        assert!(water_bottle
+            .state
+            .as_ref()
+            .unwrap()
+            .as_any()
+            .downcast_ref::<Device>()
+            .unwrap()
+            .acceleration_structure
+            .is_some());
     }
 }
