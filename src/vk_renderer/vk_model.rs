@@ -72,7 +72,7 @@ impl VkModelTransferLocation for Host {
         );
 
         let (acceleration_structure, device_acceleration_structure_buffer) =
-            match vk_model.acceleration_structure_fn.is_some() {
+            match vk_model.acceleration_structure_fp.is_some() {
                 true => {
                     let res = vk_model.create_blas(
                         &mesh_sub_allocation_data,
@@ -153,7 +153,7 @@ impl VkModelTransferLocation for Device {
         if let Some(acceleration_structure) = self.acceleration_structure {
             unsafe {
                 vk_model
-                    .acceleration_structure_fn
+                    .acceleration_structure_fp
                     .unwrap()
                     .destroy_acceleration_structure(acceleration_structure, None);
             }
@@ -180,7 +180,7 @@ impl VkModelTransferLocation for Device {
             if let Some(acceleration_structure) = self.acceleration_structure {
                 unsafe {
                     vk_model
-                        .acceleration_structure_fn
+                        .acceleration_structure_fp
                         .unwrap()
                         .destroy_acceleration_structure(acceleration_structure, None);
                 }
@@ -256,7 +256,7 @@ impl VkModelPostSubmissionCleanup for BlasBuild {
 
 struct VkModel<'a> {
     device: &'a ash::Device,
-    acceleration_structure_fn: Option<&'a khr::AccelerationStructure>,
+    acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
     allocator: Rc<RefCell<VkAllocator<'a>>>,
     transfer_command_buffer: vk::CommandBuffer,
     model_path: String,
@@ -284,7 +284,7 @@ impl VkModelUniform {
 impl<'a> VkModel<'a> {
     pub fn new(
         device: &'a ash::Device,
-        acceleration_structure_fn: Option<&'a khr::AccelerationStructure>,
+        acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
         allocator: Rc<RefCell<VkAllocator<'a>>>,
         model_path: String,
         model_matrix: Matrix3x4<f32>,
@@ -292,7 +292,7 @@ impl<'a> VkModel<'a> {
     ) -> Self {
         let mut model = VkModel {
             device,
-            acceleration_structure_fn,
+            acceleration_structure_fp,
             allocator,
             transfer_command_buffer,
             model_path,
@@ -769,7 +769,7 @@ impl<'a> VkModel<'a> {
             .build();
 
         let as_size_info = unsafe {
-            self.acceleration_structure_fn
+            self.acceleration_structure_fp
                 .unwrap()
                 .get_acceleration_structure_build_sizes(
                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
@@ -798,7 +798,7 @@ impl<'a> VkModel<'a> {
                 .offset(0)
                 .size(as_size_info.acceleration_structure_size)
                 .ty(as_build_info.ty);
-            self.acceleration_structure_fn
+            self.acceleration_structure_fp
                 .unwrap()
                 .create_acceleration_structure(&as_create_info, None)
                 .unwrap()
@@ -820,7 +820,7 @@ impl<'a> VkModel<'a> {
         };
 
         unsafe {
-            self.acceleration_structure_fn
+            self.acceleration_structure_fp
                 .unwrap()
                 .cmd_build_acceleration_structures(
                     self.transfer_command_buffer,
