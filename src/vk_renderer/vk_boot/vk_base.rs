@@ -58,9 +58,18 @@ impl VkBase {
         cfg_if::cfg_if! {
             if #[cfg(debug_assertions)] {
                 instance_extensions.push("VK_EXT_debug_utils");
+                instance_extensions.push("VK_EXT_validation_features");
                 let layer_names = std::slice::from_ref(&"VK_LAYER_KHRONOS_validation");
-            } else {
+
+                let validation_features_enable = [vk::ValidationFeatureEnableEXT::GPU_ASSISTED, vk::ValidationFeatureEnableEXT::BEST_PRACTICES, vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
+                let mut validation_features = vk::ValidationFeaturesEXT::builder()
+                    .enabled_validation_features(&validation_features_enable)
+                    .build();
+                let instance_pnext = std::ptr::addr_of!(validation_features) as *const std::ffi::c_void;
+            }
+            else {
                 let layer_names = [];
+                let instance_pnext = std::ptr::null();
             }
         }
 
@@ -87,6 +96,7 @@ impl VkBase {
         let instance = Self::create_instance(
             &entry_fn,
             application_name,
+            instance_pnext,
             &instance_extensions,
             &layer_names,
         );
@@ -508,6 +518,7 @@ impl VkBase {
     fn create_instance(
         entry_fn: &ash::Entry,
         application_name: &str,
+        instance_pnext: *const std::ffi::c_void,
         desired_instance_extensions: &[&str],
         desired_layer_names: &[&str],
     ) -> ash::Instance {
@@ -521,10 +532,12 @@ impl VkBase {
 
         let cstr_layer_names = Self::get_cptr_vec_from_str_slice(desired_layer_names);
         let cstr_extension_names = Self::get_cptr_vec_from_str_slice(desired_instance_extensions);
-        let instance_create_info = vk::InstanceCreateInfo::builder()
+
+        let mut instance_create_info = vk::InstanceCreateInfo::builder()
             .application_info(&application_info)
             .enabled_layer_names(&cstr_layer_names.0)
             .enabled_extension_names(&cstr_extension_names.0);
+        instance_create_info.p_next = instance_pnext;
 
         unsafe {
             entry_fn
