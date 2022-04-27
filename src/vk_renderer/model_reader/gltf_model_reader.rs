@@ -6,11 +6,31 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::DivAssign;
 use std::path::Path;
+use std::ptr::slice_from_raw_parts;
 
 struct GltfPrimitiveMeshAttribute {
     buffer_data_start: u64,
     buffer_data_len: u64,
     element_size: u32,
+    element_stride: u32,
+}
+
+impl GltfPrimitiveMeshAttribute {
+    fn get_element_count(&self) -> u64 {
+        self.buffer_data_len / self.element_stride as u64
+    }
+
+    fn copy_ith_element_to_ptr(&self, buffer_data: &[u8], element_idx: u64, dst_ptr: *mut u8) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                buffer_data.as_ptr().add(
+                    (self.buffer_data_start + element_idx * self.element_stride as u64) as usize,
+                ),
+                dst_ptr,
+                self.element_size as usize,
+            );
+        }
+    }
 }
 
 struct GltfPrimitive {
@@ -147,7 +167,7 @@ impl ModelReader for GltfModelReader {
         }
         let texture_flags: Vec<TextureType> = bitflag_vec!(TextureType, textures_to_copy);
 
-        let mut written_bytes: u64 = 0;
+        let mut written_bytes: usize = 0;
         let primitives_copy_data = self
             .primitives
             .iter()
@@ -155,39 +175,32 @@ impl ModelReader for GltfModelReader {
                 let mut copy_data = PrimitiveCopyInfo::default();
 
                 if let Some(first_mesh_flag) = mesh_flags.first() {
-                    copy_data.mesh_buffer_offset = written_bytes;
+                    copy_data.mesh_buffer_offset = written_bytes as u64;
                     let first_mesh_attribute = &primitive.mesh_attributes[first_mesh_flag];
-                    let element_count = first_mesh_attribute.buffer_data_len
-                        / first_mesh_attribute.element_size as u64;
+                    let element_count = first_mesh_attribute.get_element_count();
                     for i in 0..element_count {
                         for mesh_flag in &mesh_flags {
                             let attribute_to_copy =
                                 primitive.mesh_attributes.get(mesh_flag).unwrap_or_else(|| {
                                     panic!("Mesh attribute {:?} not found", mesh_flag)
                                 });
-                            unsafe {
-                                if !dst_ptr.is_null() {
-                                    std::ptr::copy_nonoverlapping(
-                                        self.buffer_data.as_ptr().add(
-                                            (attribute_to_copy.buffer_data_start
-                                                + i * attribute_to_copy.element_size as u64)
-                                                as usize,
-                                        ),
-                                        dst_ptr.add(written_bytes as usize),
-                                        attribute_to_copy.element_size as usize,
-                                    );
-                                }
+                            if !dst_ptr.is_null() {
+                                attribute_to_copy.copy_ith_element_to_ptr(
+                                    &self.buffer_data,
+                                    i,
+                                    unsafe { dst_ptr.add(written_bytes) },
+                                );
                             }
-                            written_bytes += attribute_to_copy.element_size as u64;
+                            written_bytes += attribute_to_copy.element_size as usize;
                         }
                     }
-                    copy_data.mesh_size = written_bytes - copy_data.mesh_buffer_offset;
+                    copy_data.mesh_size = written_bytes as u64 - copy_data.mesh_buffer_offset;
                     copy_data.single_mesh_element_size =
                         (copy_data.mesh_size / element_count) as u32;
                 }
 
                 if mesh_attributes_types_to_copy.contains(MeshAttributeType::INDICES) {
-                    copy_data.indices_buffer_offset = written_bytes;
+                    copy_data.indices_buffer_offset = written_bytes as u64;
                     let indices_data = primitive
                         .mesh_attributes
                         .get(&MeshAttributeType::INDICES)
@@ -197,20 +210,28 @@ impl ModelReader for GltfModelReader {
                                 MeshAttributeType::INDICES
                             )
                         });
-                    copy_data.indices_size = indices_data.buffer_data_len;
+                    copy_data.indices_size =
+                        indices_data.get_element_count() * indices_data.element_size as u64;
                     copy_data.single_index_size = indices_data.element_size;
-                    unsafe {
+
+                    let indices_slice = unsafe {
+                        slice_from_raw_parts(
+                            self.buffer_data
+                                .as_ptr()
+                                .add(indices_data.buffer_data_start as usize)
+                                as *const u16,
+                            indices_data.get_element_count() as usize,
+                        )
+                    };
+
+                    for i in 0..indices_data.get_element_count() {
                         if !dst_ptr.is_null() {
-                            std::ptr::copy_nonoverlapping(
-                                self.buffer_data
-                                    .as_ptr()
-                                    .add(indices_data.buffer_data_start as usize),
-                                dst_ptr.add(written_bytes as usize),
-                                indices_data.buffer_data_len as usize,
-                            );
+                            indices_data.copy_ith_element_to_ptr(&self.buffer_data, i, unsafe {
+                                dst_ptr.add(written_bytes)
+                            });
                         }
+                        written_bytes += indices_data.element_size as usize;
                     }
-                    written_bytes += indices_data.buffer_data_len;
                 }
 
                 if let Some(first_texture_type) = texture_flags.first() {
@@ -228,8 +249,9 @@ impl ModelReader for GltfModelReader {
                         / (copy_data.image_extent.width
                             * copy_data.image_extent.height
                             * copy_data.image_extent.depth) as usize;
-                    written_bytes = align_offset(written_bytes, component_size as u64);
-                    copy_data.image_buffer_offset = written_bytes;
+                    written_bytes =
+                        align_offset(written_bytes as u64, component_size as u64) as usize;
+                    copy_data.image_buffer_offset = written_bytes as u64;
                     copy_data.image_mip_levels = 1;
                     copy_data.image_layers = texture_flags.len() as u32;
                     copy_data.image_format = match first_texture.format {
@@ -258,10 +280,10 @@ impl ModelReader for GltfModelReader {
                                     (*texture_to_copy).pixels.len(),
                                 );
                             }
-                            written_bytes += (*texture_to_copy).pixels.len() as u64;
+                            written_bytes += (*texture_to_copy).pixels.len();
                         }
                     }
-                    copy_data.image_size = written_bytes - copy_data.image_buffer_offset;
+                    copy_data.image_size = (written_bytes as u64 - copy_data.image_buffer_offset);
                 }
                 copy_data
             })
@@ -283,38 +305,39 @@ impl ModelReader for GltfModelReader {
         let mut dia2: Vector3<f32>;
 
         for primitive in &self.primitives {
-            let primitive_position = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
-            let vertices = unsafe {
+            let vertex_attribute = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
+            let vertex_data_slice = unsafe {
                 std::slice::from_raw_parts(
-                    self.buffer_data
-                        .as_ptr()
-                        .add(primitive_position.buffer_data_start as usize)
-                        as *const Vector3<f32>,
-                    (primitive_position.buffer_data_len / primitive_position.element_size as u64)
+                    self.buffer_data.as_ptr(),
+                    (vertex_attribute.get_element_count() * vertex_attribute.element_size as u64)
                         as usize,
                 )
             };
 
-            for vertex in vertices {
-                if vertex[0] < xmin[0] {
-                    xmin = *vertex;
-                }
-                if vertex[0] > xmax[0] {
-                    xmax = *vertex;
-                }
-                if vertex[1] < ymin[1] {
-                    ymin = *vertex;
-                }
-                if vertex[1] > ymax[1] {
-                    ymax = *vertex;
-                }
-                if vertex[2] < zmin[2] {
-                    zmin = *vertex;
-                }
-                if vertex[2] > zmax[2] {
-                    zmax = *vertex;
-                }
-            }
+            vertex_data_slice
+                .windows(vertex_attribute.element_size as usize)
+                .step_by(vertex_attribute.element_stride as usize)
+                .for_each(|elem| {
+                    let vertex = unsafe { *(elem.as_ptr() as *const Vector3<f32>) };
+                    if vertex[0] < xmin[0] {
+                        xmin = vertex;
+                    }
+                    if vertex[0] > xmax[0] {
+                        xmax = vertex;
+                    }
+                    if vertex[1] < ymin[1] {
+                        ymin = vertex;
+                    }
+                    if vertex[1] > ymax[1] {
+                        ymax = vertex;
+                    }
+                    if vertex[2] < zmin[2] {
+                        zmin = vertex;
+                    }
+                    if vertex[2] > zmax[2] {
+                        zmax = vertex;
+                    }
+                });
         }
 
         /* Set *span = distance between the 2 points *min & *max (squared) */
@@ -350,35 +373,36 @@ impl ModelReader for GltfModelReader {
 
         /* SECOND PASS: increment current sphere */
         for primitive in &self.primitives {
-            let primitive_position = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
-            let vertices = unsafe {
+            let vertex_attribute = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
+            let vertex_data_slice = unsafe {
                 std::slice::from_raw_parts(
-                    self.buffer_data
-                        .as_ptr()
-                        .add(primitive_position.buffer_data_start as usize)
-                        as *const Vector3<f32>,
-                    (primitive_position.buffer_data_len / primitive_position.element_size as u64)
+                    self.buffer_data.as_ptr(),
+                    (vertex_attribute.get_element_count() * vertex_attribute.element_size as u64)
                         as usize,
                 )
             };
 
-            for vertex in vertices {
-                let delta: Vector3<f32> = vertex - center;
-                let old_to_p_sq = delta.magnitude_squared();
-                if old_to_p_sq > m_radius2
-                /* do r**2 test first */
-                {
-                    /* this point is outside of current sphere */
-                    let old_to_p = old_to_p_sq.sqrt();
-                    /* calc radius of new sphere */
-                    m_radius = (m_radius + old_to_p) * 0.5f32;
-                    m_radius2 = m_radius * m_radius; /* for next r**2 compare */
-                    let old_to_new = old_to_p - m_radius;
-                    /* calc center of new sphere */
-                    let recip = 1.0f32 / old_to_p;
-                    center = (m_radius * center + old_to_new * vertex) * recip;
-                }
-            }
+            vertex_data_slice
+                .windows(vertex_attribute.element_size as usize)
+                .step_by(vertex_attribute.element_stride as usize)
+                .for_each(|elem| {
+                    let vertex = unsafe { *(elem.as_ptr() as *const Vector3<f32>) };
+
+                    let delta: Vector3<f32> = vertex - center;
+                    let old_to_p_sq = delta.magnitude_squared();
+                    /* do r**2 test first */
+                    if old_to_p_sq > m_radius2 {
+                        /* this point is outside of current sphere */
+                        let old_to_p = old_to_p_sq.sqrt();
+                        /* calc radius of new sphere */
+                        m_radius = (m_radius + old_to_p) * 0.5f32;
+                        m_radius2 = m_radius * m_radius; /* for next r**2 compare */
+                        let old_to_new = old_to_p - m_radius;
+                        /* calc center of new sphere */
+                        let recip = 1.0f32 / old_to_p;
+                        center = (m_radius * center + old_to_new * vertex) * recip;
+                    }
+                });
         }
         Sphere::new(center, m_radius)
     }
@@ -386,11 +410,13 @@ impl ModelReader for GltfModelReader {
 
 impl GltfModelReader {
     fn get_mesh_attribute_from_accessor(accessor: gltf::Accessor) -> GltfPrimitiveMeshAttribute {
-        let accessor_view = accessor.view().unwrap();
+        let buffer_view = accessor.view().unwrap();
+        let element_stride = buffer_view.stride().unwrap_or(accessor.size());
         GltfPrimitiveMeshAttribute {
-            buffer_data_start: (accessor.offset() + accessor_view.offset()) as u64,
-            buffer_data_len: accessor_view.length() as u64,
+            buffer_data_start: (accessor.offset() + buffer_view.offset()) as u64,
+            buffer_data_len: (accessor.count() * element_stride) as u64,
             element_size: accessor.size() as u32,
+            element_stride: element_stride as u32,
         }
     }
 
@@ -401,24 +427,29 @@ impl GltfModelReader {
                 primitive.mesh_attributes.get(&MeshAttributeType::VERTICES)
             {
                 let vertex_data_slice = std::slice::from_raw_parts_mut(
-                    self.buffer_data
-                        .as_ptr()
-                        .add(vertex_attribute.buffer_data_start as usize)
-                        as *mut nalgebra::Vector3<f32>,
-                    vertex_attribute.buffer_data_len as usize
-                        / std::mem::size_of::<nalgebra::Vector3<f32>>(),
+                    self.buffer_data.as_mut_ptr(),
+                    vertex_attribute.buffer_data_len as usize,
                 );
 
-                let max_val = vertex_data_slice.iter().fold(0f32, |max_len: f32, elem| {
-                    let elem_magnitude = elem.magnitude();
-                    match elem_magnitude.partial_cmp(&max_len) {
-                        Some(Ordering::Greater) => elem_magnitude,
-                        _ => max_len,
-                    }
-                });
-                vertex_data_slice.iter_mut().for_each(|elem| {
-                    elem.div_assign(max_val);
-                });
+                let max_val = vertex_data_slice
+                    .windows(vertex_attribute.element_size as usize)
+                    .step_by(vertex_attribute.element_stride as usize)
+                    .fold(0f32, |max_len: f32, elem| {
+                        let position = unsafe { *(elem.as_ptr() as *const Vector3<f32>) };
+                        let magnitude = position.magnitude();
+                        match magnitude.partial_cmp(&max_len) {
+                            Some(Ordering::Greater) => magnitude,
+                            _ => max_len,
+                        }
+                    });
+
+                vertex_data_slice
+                    .windows(vertex_attribute.element_size as usize)
+                    .step_by(vertex_attribute.element_stride as usize)
+                    .for_each(|elem| {
+                        let mut position = unsafe { *(elem.as_ptr() as *const Vector3<f32>) };
+                        position.div_assign(max_val);
+                    });
             }
         })
     }
@@ -613,12 +644,13 @@ impl GltfModelReader {
                     _ => continue,
                 }
 
-                let mesh_attribute_element_count =
-                    mesh_attribute.1.buffer_data_len / mesh_attribute.1.element_size as u64;
                 if common_element_count.is_none() {
-                    common_element_count = Some(mesh_attribute_element_count);
+                    common_element_count = Some(mesh_attribute.1.get_element_count());
                 } else {
-                    assert_eq!(common_element_count.unwrap(), mesh_attribute_element_count);
+                    assert_eq!(
+                        common_element_count.unwrap(),
+                        mesh_attribute.1.get_element_count()
+                    );
                 }
             }
 
@@ -746,7 +778,7 @@ mod tests {
     #[test]
     fn test_textured_cube() {
         let sponza = GltfModelReader::open(
-            "assets/models/TexturedCube.glb".as_ref(),
+            "assets/models/BoxTextured.glb".as_ref(),
             true,
             Some(ash::vk::Format::B8G8R8A8_UNORM),
         );
@@ -758,7 +790,10 @@ mod tests {
         );
 
         let res = sponza.copy_model_data_to_ptr(
-            MeshAttributeType::all(),
+            MeshAttributeType::VERTICES
+                | MeshAttributeType::NORMALS
+                | MeshAttributeType::TEX_COORDS
+                | MeshAttributeType::INDICES,
             TextureType::ALBEDO,
             std::ptr::null_mut(),
         );
@@ -766,7 +801,10 @@ mod tests {
 
         let mut vec_data = vec![0u8; model_size];
         let res = sponza.copy_model_data_to_ptr(
-            MeshAttributeType::all(),
+            MeshAttributeType::VERTICES
+                | MeshAttributeType::NORMALS
+                | MeshAttributeType::TEX_COORDS
+                | MeshAttributeType::INDICES,
             TextureType::ALBEDO,
             vec_data.as_mut_ptr(),
         );
@@ -780,20 +818,7 @@ mod tests {
                 12,
             )
         };
-        let reference_first_vertex = vec![
-            -0.5773503f32,
-            -0.5773503,
-            0.5773503,
-            6.0,
-            0.0,
-            0.0,
-            0.0,
-            1.0,
-            -1.0,
-            0.0,
-            -0.0,
-            1.0,
-        ];
+        let reference_first_vertex = vec![-0.5f32, -0.5, 0.5, 6.0, 0.0, 0.0, 0.0, 1.0];
         for (e1, e2) in zip(first_vertex_view, reference_first_vertex) {
             assert!(e1 - e2 < 1e-7);
         }
@@ -820,6 +845,6 @@ mod tests {
                 4,
             )
         };
-        assert_eq!(first_texture_pixels, vec![212, 212, 212, 255]);
+        assert_eq!(first_texture_pixels, vec![220, 220, 220, 0]);
     }
 }
