@@ -214,16 +214,6 @@ impl ModelReader for GltfModelReader {
                         indices_data.get_element_count() * indices_data.element_size as u64;
                     copy_data.single_index_size = indices_data.element_size;
 
-                    let indices_slice = unsafe {
-                        slice_from_raw_parts(
-                            self.buffer_data
-                                .as_ptr()
-                                .add(indices_data.buffer_data_start as usize)
-                                as *const u16,
-                            indices_data.get_element_count() as usize,
-                        )
-                    };
-
                     for i in 0..indices_data.get_element_count() {
                         if !dst_ptr.is_null() {
                             indices_data.copy_ith_element_to_ptr(&self.buffer_data, i, unsafe {
@@ -308,9 +298,10 @@ impl ModelReader for GltfModelReader {
             let vertex_attribute = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
             let vertex_data_slice = unsafe {
                 std::slice::from_raw_parts(
-                    self.buffer_data.as_ptr(),
-                    (vertex_attribute.get_element_count() * vertex_attribute.element_size as u64)
-                        as usize,
+                    self.buffer_data
+                        .as_ptr()
+                        .add(vertex_attribute.buffer_data_start as usize),
+                    vertex_attribute.buffer_data_len as usize,
                 )
             };
 
@@ -376,9 +367,10 @@ impl ModelReader for GltfModelReader {
             let vertex_attribute = &primitive.mesh_attributes[&MeshAttributeType::VERTICES];
             let vertex_data_slice = unsafe {
                 std::slice::from_raw_parts(
-                    self.buffer_data.as_ptr(),
-                    (vertex_attribute.get_element_count() * vertex_attribute.element_size as u64)
-                        as usize,
+                    self.buffer_data
+                        .as_ptr()
+                        .add(vertex_attribute.buffer_data_start as usize),
+                    vertex_attribute.buffer_data_len as usize,
                 )
             };
 

@@ -59,19 +59,30 @@ impl VkModelTransferLocation for Host {
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
-        let (mesh_sub_allocation_data, primitives_info) = vk_model.transfer_from_host_to_device(
+        let (device_mesh_indices_buffer, primitives_info) = vk_model.transfer_from_host_to_device(
             cb,
             self.host_buffer_allocation,
             self.host_model_copy_info,
         );
+
         let host_uniform_sub_allocation = vk_model
             .allocator
             .as_ref()
             .borrow_mut()
             .get_host_uniform_sub_allocator_mut()
             .allocate(std::mem::size_of::<VkModelUniform>(), 1);
-        vk_model.uniform.copy(
-            host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr() as *mut VkModelUniform
+
+        let device_uniform_sub_allocation = vk_model
+            .allocator
+            .as_ref()
+            .borrow_mut()
+            .get_device_uniform_sub_allocator_mut()
+            .allocate(std::mem::size_of::<VkModelUniform>(), 1);
+
+        vk_model.copy_uniform(
+            &host_uniform_sub_allocation,
+            cb,
+            &device_uniform_sub_allocation,
         );
 
         let (acceleration_structure, device_acceleration_structure_buffer) =
@@ -79,9 +90,9 @@ impl VkModelTransferLocation for Host {
                 true => {
                     let res = vk_model.create_blas(
                         cb,
-                        &mesh_sub_allocation_data,
+                        &device_mesh_indices_buffer,
                         &primitives_info,
-                        host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr(),
+                        &device_uniform_sub_allocation,
                     );
                     (Some(res.0), Some(res.1))
                 }
@@ -89,8 +100,9 @@ impl VkModelTransferLocation for Host {
             };
 
         vk_model.state = Some(Box::new(Device {
-            device_mesh_sub_allocation: mesh_sub_allocation_data,
+            device_mesh_indices_buffer,
             host_uniform_sub_allocation,
+            device_uniform_sub_allocation,
             device_primitives_info: primitives_info,
             acceleration_structure,
             device_acceleration_structure_buffer,
@@ -103,11 +115,11 @@ impl VkModelTransferLocation for Host {
 }
 
 struct DevicePrimitiveInfo {
-    mesh_sub_allocation_offset: u64,
+    mesh_buffer_offset: u64,
     mesh_size: u64,
     single_mesh_element_size: u32,
 
-    indices_sub_allocation_offset: u64,
+    indices_buffer_offset: u64,
     indices_size: u64,
     single_index_size: u32,
 
@@ -135,22 +147,28 @@ impl DevicePrimitiveInfo {
 }
 
 struct Device {
-    device_mesh_sub_allocation: SubAllocationData,
+    device_mesh_indices_buffer: BufferAllocation,
     host_uniform_sub_allocation: SubAllocationData,
-    device_primitives_info: Vec<DevicePrimitiveInfo>,
+    device_uniform_sub_allocation: SubAllocationData,
     acceleration_structure: Option<vk::AccelerationStructureKHR>,
     device_acceleration_structure_buffer: Option<BufferAllocation>,
+    device_primitives_info: Vec<DevicePrimitiveInfo>,
 }
 
 impl VkModelTransferLocation for Device {
     fn to_disk(mut self: Box<Device>, vk_model: &mut VkModel) {
         let mut allocator = vk_model.allocator.as_ref().borrow_mut();
+
         allocator
-            .get_device_mesh_indices_sub_allocator_mut()
-            .free(self.device_mesh_sub_allocation);
+            .get_allocator_mut()
+            .destroy_buffer(self.device_mesh_indices_buffer);
         allocator
             .get_host_uniform_sub_allocator_mut()
             .free(self.host_uniform_sub_allocation);
+        allocator
+            .get_device_uniform_sub_allocator_mut()
+            .free(self.device_uniform_sub_allocation);
+
         if let Some(buffer) = self.device_acceleration_structure_buffer {
             allocator.get_allocator_mut().destroy_buffer(buffer);
         }
@@ -193,7 +211,7 @@ impl VkModelTransferLocation for Device {
 
         vk_model.state = Some(vk_model.transfer_from_device_to_host(
             cb,
-            self.device_mesh_sub_allocation,
+            self.device_mesh_indices_buffer,
             self.device_primitives_info,
         ));
     }
@@ -222,7 +240,7 @@ impl VkModelPostSubmissionCleanup for HostToDeviceTransfer {
 }
 
 struct DeviceToHostTransfer {
-    device_mesh_sub_allocation: SubAllocationData,
+    device_mesh_indices_allocation: BufferAllocation,
     device_images: Vec<ImageAllocation>,
 }
 impl VkModelPostSubmissionCleanup for DeviceToHostTransfer {
@@ -231,8 +249,8 @@ impl VkModelPostSubmissionCleanup for DeviceToHostTransfer {
             .allocator
             .as_ref()
             .borrow_mut()
-            .get_device_mesh_indices_sub_allocator_mut()
-            .free(self.device_mesh_sub_allocation);
+            .get_allocator_mut()
+            .destroy_buffer(self.device_mesh_indices_allocation);
 
         self.device_images.drain(..).for_each(|image_allocation| {
             vk_model
@@ -259,7 +277,7 @@ impl VkModelPostSubmissionCleanup for BlasBuild {
     }
 }
 
-struct VkModel<'a> {
+pub struct VkModel<'a> {
     device: &'a ash::Device,
     acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
     allocator: Rc<RefCell<VkAllocator<'a>>>,
@@ -274,15 +292,6 @@ struct VkModel<'a> {
 #[repr(C, packed)]
 struct VkModelUniform {
     model_matrix: Matrix3x4<f32>,
-}
-
-impl VkModelUniform {
-    fn copy(&self, dst_ptr: *mut VkModelUniform) {
-        unsafe {
-            (self as *const VkModelUniform)
-                .copy_to_nonoverlapping(dst_ptr, std::mem::size_of::<Self>())
-        }
-    }
 }
 
 impl<'a> VkModel<'a> {
@@ -339,6 +348,32 @@ impl<'a> VkModel<'a> {
         self.needs_cb_submit = false;
     }
 
+    fn copy_uniform(
+        &mut self,
+        host_uniform_sub_allocation: &SubAllocationData,
+        cb: vk::CommandBuffer,
+        device_uniform_sub_allocation: &SubAllocationData,
+    ) {
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                &self.uniform,
+                host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr() as *mut VkModelUniform,
+                std::mem::size_of::<VkModelUniform>(),
+            );
+
+            let buffer_copy_region = vk::BufferCopy2::builder()
+                .src_offset(0)
+                .dst_offset(0)
+                .size(std::mem::size_of::<VkModelUniform>() as u64);
+            let copy_buffer_info = vk::CopyBufferInfo2::builder()
+                .src_buffer(host_uniform_sub_allocation.get_buffer())
+                .dst_buffer(device_uniform_sub_allocation.get_buffer())
+                .regions(std::slice::from_ref(&buffer_copy_region));
+            self.device.cmd_copy_buffer2(cb, &copy_buffer_info);
+        }
+        self.needs_cb_submit = true;
+    }
+
     fn transfer_from_disk_to_host(&mut self) -> (BufferAllocation, ModelCopyInfo) {
         let model = GltfModelReader::open(
             self.model_path.as_ref(),
@@ -387,13 +422,23 @@ impl<'a> VkModel<'a> {
         cb: vk::CommandBuffer,
         host_buffer_allocation: BufferAllocation,
         host_model_copy_info: ModelCopyInfo,
-    ) -> (SubAllocationData, Vec<DevicePrimitiveInfo>) {
-        let device_mesh_sub_allocation = self
+    ) -> (BufferAllocation, Vec<DevicePrimitiveInfo>) {
+        let buffer_create_info = vk::BufferCreateInfo::builder()
+            .size(host_model_copy_info.compute_mesh_and_indices_size() as u64)
+            .usage(
+                vk::BufferUsageFlags::VERTEX_BUFFER
+                    | vk::BufferUsageFlags::INDEX_BUFFER
+                    | vk::BufferUsageFlags::TRANSFER_SRC
+                    | vk::BufferUsageFlags::TRANSFER_DST
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
+            );
+        let device_mesh_indices_buffer = self
             .allocator
             .as_ref()
             .borrow_mut()
-            .get_device_mesh_indices_sub_allocator_mut()
-            .allocate(host_model_copy_info.compute_mesh_and_indices_size(), 1);
+            .get_allocator_mut()
+            .allocate_buffer(&buffer_create_info, MemoryLocation::GpuOnly);
 
         let device_images_allocations = host_model_copy_info
             .get_primitive_data()
@@ -424,7 +469,7 @@ impl<'a> VkModel<'a> {
         // record the buffer copies
         let mut buffer_copies = Vec::<vk::BufferCopy>::new();
 
-        let mut destination_offset: u64 = device_mesh_sub_allocation.get_buffer_offset() as u64;
+        let mut destination_offset: u64 = 0;
         for primitive_copy_info in host_model_copy_info.get_primitive_data() {
             // mesh buffer copy
             buffer_copies.push(vk::BufferCopy {
@@ -447,7 +492,7 @@ impl<'a> VkModel<'a> {
             self.device.cmd_copy_buffer(
                 cb,
                 host_buffer_allocation.get_buffer(),
-                device_mesh_sub_allocation.get_buffer(),
+                device_mesh_indices_buffer.get_buffer(),
                 &buffer_copies,
             );
         }
@@ -456,7 +501,7 @@ impl<'a> VkModel<'a> {
             .iter()
             .map(|device_image_allocation| {
                 vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
                     .src_access_mask(vk::AccessFlags2::NONE)
                     .dst_stage_mask(vk::PipelineStageFlags2::COPY)
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
@@ -513,7 +558,8 @@ impl<'a> VkModel<'a> {
         image_memory_barriers.iter_mut().for_each(|memory_barrier| {
             memory_barrier.src_stage_mask = vk::PipelineStageFlags2::COPY;
             memory_barrier.src_access_mask = vk::AccessFlags2::TRANSFER_WRITE;
-            memory_barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER;
+            memory_barrier.dst_stage_mask = vk::PipelineStageFlags2::FRAGMENT_SHADER
+                | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR;
             memory_barrier.dst_access_mask = vk::AccessFlags2::SHADER_SAMPLED_READ;
             memory_barrier.old_layout = vk::ImageLayout::TRANSFER_DST_OPTIMAL;
             memory_barrier.new_layout = vk::ImageLayout::READ_ONLY_OPTIMAL;
@@ -532,12 +578,10 @@ impl<'a> VkModel<'a> {
         )
         .map(
             |(host_copy_info, mesh_and_idx_buffer_copy, image)| DevicePrimitiveInfo {
-                mesh_sub_allocation_offset: mesh_and_idx_buffer_copy[0].dst_offset
-                    - device_mesh_sub_allocation.get_buffer_offset() as u64,
+                mesh_buffer_offset: mesh_and_idx_buffer_copy[0].dst_offset,
                 mesh_size: mesh_and_idx_buffer_copy[0].size,
                 single_mesh_element_size: host_copy_info.single_mesh_element_size,
-                indices_sub_allocation_offset: mesh_and_idx_buffer_copy[1].dst_offset
-                    - device_mesh_sub_allocation.get_buffer_offset() as u64,
+                indices_buffer_offset: mesh_and_idx_buffer_copy[1].dst_offset,
                 indices_size: mesh_and_idx_buffer_copy[1].size,
                 single_index_size: host_copy_info.single_index_size,
                 image,
@@ -555,13 +599,13 @@ impl<'a> VkModel<'a> {
                 host_buffer_allocation,
             }));
 
-        (device_mesh_sub_allocation, primitives_model_info)
+        (device_mesh_indices_buffer, primitives_model_info)
     }
 
     fn transfer_from_device_to_host(
         &mut self,
         cb: vk::CommandBuffer,
-        device_mesh_sub_allocation: SubAllocationData,
+        device_mesh_indices_allocation: BufferAllocation,
         mut device_primitives_info: Vec<DevicePrimitiveInfo>,
     ) -> Box<Host> {
         let host_buffer_size =
@@ -588,7 +632,10 @@ impl<'a> VkModel<'a> {
             .iter()
             .map(|device_primitive_info| {
                 vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
+                    .src_stage_mask(
+                        vk::PipelineStageFlags2::FRAGMENT_SHADER
+                            | vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
+                    )
                     .src_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
                     .dst_stage_mask(vk::PipelineStageFlags2::COPY)
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
@@ -618,13 +665,13 @@ impl<'a> VkModel<'a> {
         for device_primitive_info in device_primitives_info.iter() {
             // record the buffer copy
             buffer_copies.push(vk::BufferCopy {
-                src_offset: device_primitive_info.mesh_sub_allocation_offset,
+                src_offset: device_primitive_info.mesh_buffer_offset,
                 dst_offset: destination_offset,
                 size: device_primitive_info.mesh_size,
             });
             destination_offset += device_primitive_info.mesh_size;
             buffer_copies.push(vk::BufferCopy {
-                src_offset: device_primitive_info.indices_sub_allocation_offset,
+                src_offset: device_primitive_info.indices_buffer_offset,
                 dst_offset: destination_offset,
                 size: device_primitive_info.indices_size,
             });
@@ -678,7 +725,7 @@ impl<'a> VkModel<'a> {
         unsafe {
             self.device.cmd_copy_buffer(
                 cb,
-                device_mesh_sub_allocation.get_buffer(),
+                device_mesh_indices_allocation.get_buffer(),
                 host_buffer_allocation.get_buffer(),
                 &buffer_copies,
             );
@@ -687,7 +734,7 @@ impl<'a> VkModel<'a> {
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanups
             .push(Box::new(DeviceToHostTransfer {
-                device_mesh_sub_allocation,
+                device_mesh_indices_allocation,
                 device_images: device_primitives_info
                     .drain(..)
                     .map(|elem| elem.image)
@@ -703,24 +750,24 @@ impl<'a> VkModel<'a> {
     fn create_blas(
         &mut self,
         cb: vk::CommandBuffer,
-        device_mesh_sub_allocation: &SubAllocationData,
+        device_mesh_allocation: &BufferAllocation,
         device_primitives_info: &[DevicePrimitiveInfo],
-        host_uniform_address: *const std::ffi::c_void,
+        device_uniform_allocation: &SubAllocationData,
     ) -> (vk::AccelerationStructureKHR, BufferAllocation) {
         let transform_address = vk::DeviceOrHostAddressConstKHR {
-            host_address: host_uniform_address,
+            device_address: device_uniform_allocation.get_device_ptr().unwrap(),
         };
 
         let as_geom_info = device_primitives_info
             .iter()
             .map(|device_primitive_info| {
                 let vertices_address = vk::DeviceOrHostAddressConstKHR {
-                    device_address: device_mesh_sub_allocation.get_device_ptr().unwrap()
-                        + device_primitive_info.mesh_sub_allocation_offset,
+                    device_address: device_mesh_allocation.get_device_address().unwrap()
+                        + device_primitive_info.mesh_buffer_offset,
                 };
                 let indices_address = vk::DeviceOrHostAddressConstKHR {
-                    device_address: device_mesh_sub_allocation.get_device_ptr().unwrap()
-                        + device_primitive_info.indices_sub_allocation_offset,
+                    device_address: device_mesh_allocation.get_device_address().unwrap()
+                        + device_primitive_info.indices_buffer_offset,
                 };
 
                 let acceleration_structure_geometry_triangles_data =
@@ -769,7 +816,6 @@ impl<'a> VkModel<'a> {
             .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
             .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .src_acceleration_structure(vk::AccelerationStructureKHR::null())
             .geometries(&as_geom_info)
             .build();
 
@@ -779,7 +825,10 @@ impl<'a> VkModel<'a> {
                 .get_acceleration_structure_build_sizes(
                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
                     &as_build_info,
-                    std::slice::from_ref(&(as_build_ranges.len() as u32)),
+                    &as_build_ranges
+                        .iter()
+                        .map(|e| e.primitive_count)
+                        .collect::<Vec<_>>(),
                 )
         };
 
@@ -825,13 +874,28 @@ impl<'a> VkModel<'a> {
         };
 
         unsafe {
-            let memory_barrier = vk::MemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::ALL_COMMANDS)
-                .src_access_mask(vk::AccessFlags2::MEMORY_WRITE)
-                .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                .dst_access_mask(vk::AccessFlags2::MEMORY_READ);
-            let dependancy_info = vk::DependencyInfo::builder()
-                .memory_barriers(std::slice::from_ref(&memory_barrier));
+            let buffer_memory_barriers = [
+                vk::BufferMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .buffer(device_mesh_allocation.get_buffer())
+                    .offset(0)
+                    .size(vk::WHOLE_SIZE)
+                    .build(),
+                vk::BufferMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                    .buffer(device_uniform_allocation.get_buffer())
+                    .offset(0)
+                    .size(vk::WHOLE_SIZE)
+                    .build(),
+            ];
+            let dependancy_info =
+                vk::DependencyInfo::builder().buffer_memory_barriers(&buffer_memory_barriers);
             self.device.cmd_pipeline_barrier2(cb, &dependancy_info);
 
             self.acceleration_structure_fp
@@ -1120,39 +1184,37 @@ mod tests {
             bvk.device()
                 .allocate_command_buffers(&command_buffer_create_info)
                 .unwrap()
-                .first()
-                .unwrap()
-                .clone()
         };
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
             bvk.device()
-                .begin_command_buffer(command_buffer, &begin_command_buffer)
+                .begin_command_buffer(command_buffer[0], &begin_command_buffer)
                 .unwrap();
         };
-        let fence_create_info = vk::FenceCreateInfo::default();
-        let fence = unsafe { bvk.device().create_fence(&fence_create_info, None).unwrap() };
 
-        water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer);
+        water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer[0]);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
         assert!(water_bottle.needs_command_buffer_submission());
 
+        unsafe {
+            bvk.device()
+                .end_command_buffer(command_buffer[0].clone())
+                .unwrap();
+        }
+
         let command_buffer_submit_info =
-            vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer);
+            vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer[0].clone());
         let queue_submit2 = vk::SubmitInfo2::builder()
             .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
         unsafe {
-            bvk.device().end_command_buffer(command_buffer).unwrap();
             bvk.device()
                 .queue_submit2(
                     *bvk.queues().first().unwrap(),
                     std::slice::from_ref(&queue_submit2),
-                    fence,
+                    vk::Fence::null(),
                 )
                 .unwrap();
-            bvk.device()
-                .wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)
-                .unwrap();
+            bvk.device().device_wait_idle().unwrap();
             bvk.device()
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();

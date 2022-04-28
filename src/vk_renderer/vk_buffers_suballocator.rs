@@ -50,6 +50,10 @@ impl SubAllocationData {
         self.device_ptr
     }
 
+    pub fn get_size(&self) -> usize {
+        self.block_size
+    }
+
     // returns the block size and offset of the suballocation
     fn get_residing_block(&self) -> (usize, usize) {
         (

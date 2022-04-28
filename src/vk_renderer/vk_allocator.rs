@@ -6,8 +6,8 @@ use std::rc::Rc;
 
 pub struct VkAllocator<'a> {
     allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
-    device_mesh_indices_sub_allocator: VkBuffersSubAllocator<'a>,
     host_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
+    device_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
 }
 
 impl<'a> VkAllocator<'a> {
@@ -21,29 +21,27 @@ impl<'a> VkAllocator<'a> {
             device,
             physical_device,
         )));
-        let mesh_suballocator = VkBuffersSubAllocator::new(
+        let host_uniforms_sub_allocator = VkBuffersSubAllocator::new(
             allocator.clone(),
-            vk::BufferUsageFlags::TRANSFER_DST
-                | vk::BufferUsageFlags::TRANSFER_SRC
-                | vk::BufferUsageFlags::VERTEX_BUFFER
-                | vk::BufferUsageFlags::INDEX_BUFFER
+            vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
+            MemoryLocation::CpuToGpu,
+            524_288,
+            256,
+        );
+        let device_uniforms_sub_allocator = VkBuffersSubAllocator::new(
+            allocator.clone(),
+            vk::BufferUsageFlags::UNIFORM_BUFFER
                 | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                | vk::BufferUsageFlags::TRANSFER_DST
                 | vk::BufferUsageFlags::ACCELERATION_STRUCTURE_BUILD_INPUT_READ_ONLY_KHR,
             MemoryLocation::GpuOnly,
-            100_000_000,
-            512,
-        );
-        let uniforms_suballocator = VkBuffersSubAllocator::new(
-            allocator.clone(),
-            vk::BufferUsageFlags::UNIFORM_BUFFER,
-            MemoryLocation::CpuToGpu,
             524_288,
             256,
         );
         VkAllocator {
             allocator,
-            device_mesh_indices_sub_allocator: mesh_suballocator,
-            host_uniforms_sub_allocator: uniforms_suballocator,
+            host_uniforms_sub_allocator,
+            device_uniforms_sub_allocator,
         }
     }
 
@@ -51,12 +49,12 @@ impl<'a> VkAllocator<'a> {
         self.allocator.as_ref().borrow_mut()
     }
 
-    pub fn get_device_mesh_indices_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
-        &mut self.device_mesh_indices_sub_allocator
-    }
-
     pub fn get_host_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
         &mut self.host_uniforms_sub_allocator
+    }
+
+    pub fn get_device_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
+        &mut self.device_uniforms_sub_allocator
     }
 }
 
