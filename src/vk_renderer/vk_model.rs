@@ -196,6 +196,9 @@ impl VkModelTransferLocation for Device {
             allocator
                 .get_host_uniform_sub_allocator_mut()
                 .free(self.host_uniform_sub_allocation);
+            allocator
+                .get_device_uniform_sub_allocator_mut()
+                .free(self.device_uniform_sub_allocation);
             if let Some(buffer) = self.device_acceleration_structure_buffer {
                 allocator.get_allocator_mut().destroy_buffer(buffer);
             }
@@ -1183,27 +1186,25 @@ mod tests {
         let command_buffer = unsafe {
             bvk.device()
                 .allocate_command_buffers(&command_buffer_create_info)
-                .unwrap()
+                .unwrap()[0]
         };
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
             bvk.device()
-                .begin_command_buffer(command_buffer[0], &begin_command_buffer)
+                .begin_command_buffer(command_buffer, &begin_command_buffer)
                 .unwrap();
         };
 
-        water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer[0]);
+        water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
         assert!(water_bottle.needs_command_buffer_submission());
 
         unsafe {
-            bvk.device()
-                .end_command_buffer(command_buffer[0].clone())
-                .unwrap();
+            bvk.device().end_command_buffer(command_buffer).unwrap();
         }
 
         let command_buffer_submit_info =
-            vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer[0].clone());
+            vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer);
         let queue_submit2 = vk::SubmitInfo2::builder()
             .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
         unsafe {
@@ -1220,6 +1221,11 @@ mod tests {
                 .unwrap();
         }
         water_bottle.reset_command_buffer_submission_status();
+        unsafe {
+            bvk.device()
+                .free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));
+            bvk.device().destroy_command_pool(command_pool, None);
+        }
         assert!(water_bottle
             .state
             .as_ref()
