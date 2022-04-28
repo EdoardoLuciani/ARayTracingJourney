@@ -395,14 +395,13 @@ impl<'a> VkModel<'a> {
             | MeshAttributeType::INDICES;
         let texture_types = TextureType::ALBEDO | TextureType::ORM | TextureType::NORMAL;
 
-        let copy_info =
-            model.copy_model_data_to_ptr(mesh_attributes, texture_types, std::ptr::null_mut());
+        let copy_info = model.copy_model_data_to_ptr(mesh_attributes, texture_types, None);
 
         // creating the host buffer for copying to the device
         let buffer_create_info = vk::BufferCreateInfo::builder()
             .size(copy_info.compute_total_size() as vk::DeviceSize)
             .usage(vk::BufferUsageFlags::TRANSFER_SRC);
-        let transient_allocation = self
+        let mut transient_allocation = self
             .allocator
             .as_ref()
             .borrow_mut()
@@ -410,11 +409,7 @@ impl<'a> VkModel<'a> {
             .allocate_buffer(&buffer_create_info, gpu_allocator::MemoryLocation::CpuToGpu);
 
         // copying contents to host memory
-        let dst_ptr = transient_allocation
-            .get_allocation()
-            .mapped_ptr()
-            .unwrap()
-            .as_ptr() as *mut u8;
+        let dst_ptr = transient_allocation.get_allocation_mut().mapped_slice_mut();
         model.copy_model_data_to_ptr(mesh_attributes, texture_types, dst_ptr);
 
         (transient_allocation, copy_info)

@@ -1,12 +1,8 @@
 use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
-use crate::vk_renderer::model_reader::model_reader::ModelReader;
-use crate::{GltfModelReader, MeshAttributeType, TextureType};
 use ash::{extensions::*, vk};
-use gpu_allocator::MemoryLocation;
 use nalgebra::*;
 use std::cell::RefCell;
-use std::path::Path;
 use std::rc::Rc;
 
 struct FrameData {

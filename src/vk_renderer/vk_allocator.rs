@@ -185,6 +185,10 @@ impl BufferAllocation {
         &self.allocation
     }
 
+    pub fn get_allocation_mut(&mut self) -> &mut vkalloc::Allocation {
+        &mut self.allocation
+    }
+
     pub fn get_device_address(&self) -> Option<vk::DeviceAddress> {
         self.device_address
     }

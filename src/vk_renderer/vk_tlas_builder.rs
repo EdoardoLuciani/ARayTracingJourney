@@ -2,7 +2,6 @@ use crate::vk_renderer::vk_allocator::{BufferAllocation, ImageAllocation, VkAllo
 use ash::vk::{AccelerationStructureReferenceKHR, Packed24_8, TransformMatrixKHR};
 use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
-use nalgebra::*;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -172,7 +171,5 @@ impl<'a> VkTlasBuilder<'a> {
 
 mod tests {
     #[test]
-    fn tlas_build() {
-        
-    }
+    fn tlas_build() {}
 }

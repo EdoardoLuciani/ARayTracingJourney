@@ -44,7 +44,7 @@ pub trait ModelReader {
         &self,
         mesh_attributes_types_to_copy: MeshAttributeType,
         textures_to_copy: TextureType,
-        dst_ptr: *mut u8,
+        dst_slice: Option<&mut [u8]>,
     ) -> ModelCopyInfo;
     fn get_primitives_bounding_sphere(&self) -> Sphere;
 }

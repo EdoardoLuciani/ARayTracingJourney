@@ -6,7 +6,6 @@ use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::ops::DivAssign;
 use std::path::Path;
-use std::ptr::slice_from_raw_parts;
 
 struct GltfPrimitiveMeshAttribute {
     buffer_data_start: u64,
@@ -150,15 +149,15 @@ impl ModelReader for GltfModelReader {
         gltf_model
     }
 
-    /* if dst_ptr is null, requested fields are validated by checking if they are available in the model,
+    /* if dst_slice is None, requested fields are validated by checking if they are available in the model,
     if not, the function panics.
-    Return value is the size (in bytes) written if dst_ptr would not be null
-    if dst_ptr is not null a copy to dst_ptr is performed. */
+    Return value is the metadata info if dst_slice would not be null
+    if dst_slice is not None a copy to dst_slice is performed. */
     fn copy_model_data_to_ptr(
         &self,
         mesh_attributes_types_to_copy: MeshAttributeType,
         textures_to_copy: TextureType,
-        dst_ptr: *mut u8,
+        mut dst_slice: Option<&mut [u8]>,
     ) -> ModelCopyInfo {
         let mut mesh_flags: Vec<MeshAttributeType> =
             bitflag_vec!(MeshAttributeType, mesh_attributes_types_to_copy);
@@ -184,11 +183,11 @@ impl ModelReader for GltfModelReader {
                                 primitive.mesh_attributes.get(mesh_flag).unwrap_or_else(|| {
                                     panic!("Mesh attribute {:?} not found", mesh_flag)
                                 });
-                            if !dst_ptr.is_null() {
+                            if let Some(data) = &mut dst_slice {
                                 attribute_to_copy.copy_ith_element_to_ptr(
                                     &self.buffer_data,
                                     i,
-                                    unsafe { dst_ptr.add(written_bytes) },
+                                    unsafe { data.as_mut_ptr().add(written_bytes) },
                                 );
                             }
                             written_bytes += attribute_to_copy.element_size as usize;
@@ -215,9 +214,9 @@ impl ModelReader for GltfModelReader {
                     copy_data.single_index_size = indices_data.element_size;
 
                     for i in 0..indices_data.get_element_count() {
-                        if !dst_ptr.is_null() {
+                        if let Some(dst_slice) = &mut dst_slice {
                             indices_data.copy_ith_element_to_ptr(&self.buffer_data, i, unsafe {
-                                dst_ptr.add(written_bytes)
+                                dst_slice.as_mut_ptr().add(written_bytes)
                             });
                         }
                         written_bytes += indices_data.element_size as usize;
@@ -263,17 +262,17 @@ impl ModelReader for GltfModelReader {
                                 panic!("Texture type {:?} not found in model", texture_type)
                             });
                         unsafe {
-                            if !dst_ptr.is_null() {
+                            if let Some(dst_slice) = &mut dst_slice {
                                 std::ptr::copy_nonoverlapping(
                                     (*texture_to_copy).pixels.as_ptr(),
-                                    dst_ptr.add(written_bytes as usize),
+                                    dst_slice.as_mut_ptr().add(written_bytes),
                                     (*texture_to_copy).pixels.len(),
                                 );
                             }
                             written_bytes += (*texture_to_copy).pixels.len();
                         }
                     }
-                    copy_data.image_size = (written_bytes as u64 - copy_data.image_buffer_offset);
+                    copy_data.image_size = written_bytes as u64 - copy_data.image_buffer_offset;
                 }
                 copy_data
             })
@@ -719,7 +718,7 @@ mod tests {
 
     #[test]
     fn mix_and_wide_permute_pixel_x86_simd() {
-        let mut src_data = (0..128).map(|e| e).collect::<Vec<u8>>();
+        let src_data = (0..128).map(|e| e).collect::<Vec<u8>>();
 
         let conversion_map = HashMap::from([(0, 2), (1, 0), (2, 1), (3, 3)]);
 
@@ -787,7 +786,7 @@ mod tests {
                 | MeshAttributeType::TEX_COORDS
                 | MeshAttributeType::INDICES,
             TextureType::ALBEDO,
-            std::ptr::null_mut(),
+            None,
         );
         let model_size = res.compute_total_size();
 
@@ -798,7 +797,7 @@ mod tests {
                 | MeshAttributeType::TEX_COORDS
                 | MeshAttributeType::INDICES,
             TextureType::ALBEDO,
-            vec_data.as_mut_ptr(),
+            Some(&mut vec_data),
         );
 
         let first_vertex_view = unsafe {
