@@ -105,7 +105,7 @@ pub unsafe fn compare_device_features_structs(
     }
     // then we know that the structs type are the same so we cast them to a view of u32
     // the offset has a 4 added to it because of struct padding
-    let offset = size_of::<ash::vk::StructureType>() + 4 + size_of::<*mut c_void>();
+    let offset = size_of::<vk::StructureType>() + 4 + size_of::<*mut c_void>();
 
     // struct at the end will have 4 more bytes due to the fact its size has to be divisible by the
     // largest member which in this case is size_of<*mut c_void> = 8

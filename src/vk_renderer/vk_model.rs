@@ -406,7 +406,7 @@ impl<'a> VkModel<'a> {
             .as_ref()
             .borrow_mut()
             .get_allocator_mut()
-            .allocate_buffer(&buffer_create_info, gpu_allocator::MemoryLocation::CpuToGpu);
+            .allocate_buffer(&buffer_create_info, MemoryLocation::CpuToGpu);
 
         // copying contents to host memory
         let dst_ptr = transient_allocation.get_allocation_mut().mapped_slice_mut();

@@ -55,7 +55,7 @@ impl ModelReader for GltfModelReader {
     fn open(
         file_path: &Path,
         normalize_vectors: bool,
-        coerce_image_to_format: Option<ash::vk::Format>,
+        coerce_image_to_format: Option<Format>,
     ) -> Self {
         let (document, mut buffers, images) = gltf::import(file_path)
             .unwrap_or_else(|_| panic!("Could not read file {:?}", file_path.as_os_str()));
@@ -244,16 +244,16 @@ impl ModelReader for GltfModelReader {
                     copy_data.image_mip_levels = 1;
                     copy_data.image_layers = texture_flags.len() as u32;
                     copy_data.image_format = match first_texture.format {
-                        gltf::image::Format::R8 => ash::vk::Format::R8_UNORM,
-                        gltf::image::Format::R8G8 => ash::vk::Format::R8G8_UNORM,
-                        gltf::image::Format::R8G8B8 => ash::vk::Format::R8G8B8_UNORM,
-                        gltf::image::Format::R8G8B8A8 => ash::vk::Format::R8G8B8A8_UNORM,
-                        gltf::image::Format::B8G8R8 => ash::vk::Format::B8G8R8_UNORM,
-                        gltf::image::Format::B8G8R8A8 => ash::vk::Format::B8G8R8A8_UNORM,
-                        gltf::image::Format::R16 => ash::vk::Format::R16_UNORM,
-                        gltf::image::Format::R16G16 => ash::vk::Format::R16G16_UNORM,
-                        gltf::image::Format::R16G16B16 => ash::vk::Format::R16G16B16_UNORM,
-                        gltf::image::Format::R16G16B16A16 => ash::vk::Format::R16G16B16A16_UNORM,
+                        gltf::image::Format::R8 => Format::R8_UNORM,
+                        gltf::image::Format::R8G8 => Format::R8G8_UNORM,
+                        gltf::image::Format::R8G8B8 => Format::R8G8B8_UNORM,
+                        gltf::image::Format::R8G8B8A8 => Format::R8G8B8A8_UNORM,
+                        gltf::image::Format::B8G8R8 => Format::B8G8R8_UNORM,
+                        gltf::image::Format::B8G8R8A8 => Format::B8G8R8A8_UNORM,
+                        gltf::image::Format::R16 => Format::R16_UNORM,
+                        gltf::image::Format::R16G16 => Format::R16G16_UNORM,
+                        gltf::image::Format::R16G16B16 => Format::R16G16B16_UNORM,
+                        gltf::image::Format::R16G16B16A16 => Format::R16G16B16A16_UNORM,
                     };
                     copy_data.image_size = 0;
                     for texture_type in &texture_flags {
@@ -426,7 +426,7 @@ impl GltfModelReader {
                     .windows(vertex_attribute.element_size as usize)
                     .step_by(vertex_attribute.element_stride as usize)
                     .fold(0f32, |max_len: f32, elem| {
-                        let position = unsafe { *(elem.as_ptr() as *const Vector3<f32>) };
+                        let position = *(elem.as_ptr() as *const Vector3<f32>);
                         let magnitude = position.magnitude();
                         match magnitude.partial_cmp(&max_len) {
                             Some(Ordering::Greater) => magnitude,
@@ -438,7 +438,7 @@ impl GltfModelReader {
                     .windows(vertex_attribute.element_size as usize)
                     .step_by(vertex_attribute.element_stride as usize)
                     .for_each(|elem| {
-                        let mut position = unsafe { *(elem.as_ptr() as *const Vector3<f32>) };
+                        let mut position = *(elem.as_ptr() as *const Vector3<f32>);
                         position.div_assign(max_val);
                     });
             }
@@ -446,7 +446,7 @@ impl GltfModelReader {
     }
 
     // Given a format, convert all images to that one
-    fn coerce_images_to_format(&mut self, format: ash::vk::Format) {
+    fn coerce_images_to_format(&mut self, format: Format) {
         let (dst_map, d_t_size): (_, u8) = match format {
             Format::R8G8B8A8_UNORM => (HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]), 4),
             Format::B8G8R8A8_UNORM => (HashMap::from([('b', 0), ('g', 1), ('r', 2), ('a', 3)]), 4),

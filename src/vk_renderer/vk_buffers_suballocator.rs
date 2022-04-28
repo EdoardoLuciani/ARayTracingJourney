@@ -27,7 +27,7 @@ struct BufferUnitData {
 pub struct SubAllocationData {
     buffer: vk::Buffer,
     buffer_offset: usize,
-    host_ptr: Option<std::ptr::NonNull<std::ffi::c_void>>,
+    host_ptr: Option<NonNull<std::ffi::c_void>>,
     device_ptr: Option<vk::DeviceAddress>,
     alignment_offset_from_buffer_offset: usize,
     block_size: usize,
@@ -42,7 +42,7 @@ impl SubAllocationData {
         self.buffer_offset
     }
 
-    pub fn get_host_ptr(&self) -> Option<std::ptr::NonNull<std::ffi::c_void>> {
+    pub fn get_host_ptr(&self) -> Option<NonNull<std::ffi::c_void>> {
         self.host_ptr
     }
 
