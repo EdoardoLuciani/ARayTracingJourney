@@ -22,9 +22,9 @@ trait VkModelTransferLocation {
     fn as_any(&self) -> &dyn Any;
 }
 
-struct Disk;
-impl VkModelTransferLocation for Disk {
-    fn to_host(self: Box<Disk>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
+struct Storage;
+impl VkModelTransferLocation for Storage {
+    fn to_host(self: Box<Storage>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
         let (buffer_allocation, model_copy_info) = vk_model.transfer_from_disk_to_host();
         vk_model.state = Some(Box::new(Host {
             host_buffer_allocation: buffer_allocation,
@@ -32,7 +32,7 @@ impl VkModelTransferLocation for Disk {
         }));
     }
 
-    fn to_device(self: Box<Disk>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
+    fn to_device(self: Box<Storage>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
         self.to_host(vk_model, cb);
         vk_model.state.take().unwrap().to_device(vk_model, cb);
     }
@@ -55,7 +55,7 @@ impl VkModelTransferLocation for Host {
             .borrow_mut()
             .get_allocator_mut()
             .destroy_buffer(self.host_buffer_allocation);
-        vk_model.state = Some(Box::new(Disk {}));
+        vk_model.state = Some(Box::new(Storage {}));
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
@@ -187,7 +187,7 @@ impl VkModelTransferLocation for Device {
                     .get_allocator_mut()
                     .destroy_image(primitive_info.image);
             });
-        vk_model.state = Some(Box::new(Disk {}))
+        vk_model.state = Some(Box::new(Storage {}))
     }
 
     fn to_host(self: Box<Device>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
@@ -312,7 +312,7 @@ impl<'a> VkModel<'a> {
             model_path,
             model_bounding_sphere: None,
             uniform: VkModelUniform { model_matrix },
-            state: Some(Box::new(Disk {})),
+            state: Some(Box::new(Storage {})),
             needs_cb_submit: false,
             post_cb_submit_cleanups: Vec::new(),
         };
@@ -349,6 +349,19 @@ impl<'a> VkModel<'a> {
             elem.cleanup(self);
         }
         self.needs_cb_submit = false;
+    }
+
+    pub fn get_model_matrix(&self) -> vk::TransformMatrixKHR {
+        let matrix: [f32; 12] = self.uniform.model_matrix.as_slice().try_into().unwrap();
+        vk::TransformMatrixKHR { matrix }
+    }
+
+    pub fn get_acceleration_structure(&self) -> Option<vk::AccelerationStructureKHR> {
+        self.state
+            .as_ref()?
+            .as_any()
+            .downcast_ref::<Device>()?
+            .acceleration_structure
     }
 
     fn copy_uniform(
@@ -752,10 +765,6 @@ impl<'a> VkModel<'a> {
         device_primitives_info: &[DevicePrimitiveInfo],
         device_uniform_allocation: &SubAllocationData,
     ) -> (vk::AccelerationStructureKHR, BufferAllocation) {
-        let transform_address = vk::DeviceOrHostAddressConstKHR {
-            device_address: device_uniform_allocation.get_device_ptr().unwrap(),
-        };
-
         let as_geom_info = device_primitives_info
             .iter()
             .map(|device_primitive_info| {
@@ -782,7 +791,6 @@ impl<'a> VkModel<'a> {
                         )
                         .index_type(device_primitive_info.get_indices_type())
                         .index_data(indices_address)
-                        .transform_data(transform_address)
                         .build();
                 let acceleration_structure_geometry_data =
                     vk::AccelerationStructureGeometryDataKHR {
@@ -927,7 +935,6 @@ mod tests {
     use crate::vk_renderer::vk_boot::vk_base::VkBase;
     use crate::vk_renderer::vk_model::VkModel;
     use ash::vk;
-    use nalgebra::{Matrix4, Vector3};
     use std::cell::RefCell;
     use std::rc::Rc;
 
@@ -995,7 +1002,12 @@ mod tests {
         let fence = unsafe { bvk.device().create_fence(&fence_create_info, None).unwrap() };
 
         water_bottle.update_model_status(&Vector3::from_element(100.0f32), command_buffer);
-        assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Disk>());
+        assert!(water_bottle
+            .state
+            .as_ref()
+            .unwrap()
+            .as_any()
+            .is::<Storage>());
         assert!(!water_bottle.needs_command_buffer_submission());
 
         water_bottle.update_model_status(&Vector3::from_element(7.0f32), command_buffer);
