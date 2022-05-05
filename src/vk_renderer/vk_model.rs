@@ -356,12 +356,38 @@ impl<'a> VkModel<'a> {
         vk::TransformMatrixKHR { matrix }
     }
 
-    pub fn get_acceleration_structure(&self) -> Option<vk::AccelerationStructureKHR> {
-        self.state
-            .as_ref()?
-            .as_any()
-            .downcast_ref::<Device>()?
-            .acceleration_structure
+    pub fn get_acceleration_structure_instance(
+        &self,
+    ) -> Option<vk::AccelerationStructureInstanceKHR> {
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+
+        Some(vk::AccelerationStructureInstanceKHR {
+            transform: self.get_model_matrix(),
+            instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
+            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
+                0,
+                vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
+            ),
+            acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
+                device_handle: device_state
+                    .device_acceleration_structure_buffer
+                    .as_ref()?
+                    .get_device_address()
+                    .unwrap(),
+            },
+        })
+    }
+
+    pub fn get_blas_buffer(&self) -> Option<vk::Buffer> {
+        Some(
+            self.state
+                .as_ref()?
+                .as_any()
+                .downcast_ref::<Device>()?
+                .device_acceleration_structure_buffer
+                .as_ref()?
+                .get_buffer(),
+        )
     }
 
     fn copy_uniform(
