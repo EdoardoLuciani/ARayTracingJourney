@@ -1,4 +1,4 @@
-use super::vk_allocator::*;
+use super::vk_memory_resource_allocator::*;
 use ash::vk;
 use gpu_allocator::MemoryLocation;
 use std::borrow::BorrowMut;
@@ -296,7 +296,6 @@ impl<'a> VkBuffersSubAllocator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::super::vk_allocator::*;
     use super::*;
     use crate::vk_renderer::vk_boot::vk_base::VkBase;
     use ash::vk;

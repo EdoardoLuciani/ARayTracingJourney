@@ -7,12 +7,12 @@ use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
 use nalgebra::*;
 
-use crate::vk_renderer::model_reader::model_reader::{
-    align_offset, ModelCopyInfo, ModelReader, PrimitiveCopyInfo, Sphere,
-};
-use crate::vk_renderer::vk_allocator::{BufferAllocation, ImageAllocation, VkAllocator};
-use crate::vk_renderer::vk_buffers_suballocator::SubAllocationData;
-use crate::{GltfModelReader, MeshAttributeType, TextureType};
+use super::vk_allocator::vk_buffers_suballocator::*;
+use super::vk_allocator::vk_memory_resource_allocator::*;
+use super::vk_allocator::VkAllocator;
+
+use super::model_reader::gltf_model_reader::GltfModelReader;
+use super::model_reader::model_reader::*;
 
 // Trait for managing the state of the model from disk <-> host <-> device
 trait VkModelTransferLocation {

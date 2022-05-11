@@ -1,4 +1,5 @@
-use crate::vk_renderer::vk_allocator::{BufferAllocation, VkAllocator};
+use super::vk_allocator::vk_memory_resource_allocator::*;
+use super::vk_allocator::VkAllocator;
 use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
 use std::cell::RefCell;

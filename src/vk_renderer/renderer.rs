@@ -10,9 +10,7 @@ struct FrameData {
     main_command: vk_base::CommandRecordInfo,
 }
 
-pub struct VulkanTempleRayTracedRenderer {
-    bvk: vk_base::VkBase,
-}
+pub struct VulkanTempleRayTracedRenderer {}
 
 impl VulkanTempleRayTracedRenderer {
     pub fn new(window_size: (u32, u32), window_handle: raw_window_handle::RawWindowHandle) -> Self {
@@ -52,7 +50,7 @@ impl VulkanTempleRayTracedRenderer {
             bvk.physical_device().clone(),
         )));
 
-        VulkanTempleRayTracedRenderer { bvk }
+        VulkanTempleRayTracedRenderer {}
     }
 
     pub fn add_model(file_path: &std::path::Path, model_matrix: Matrix4<f32>) {}

@@ -666,9 +666,7 @@ impl GltfModelReader {
 
 #[cfg(test)]
 mod tests {
-    use crate::vk_renderer::model_reader::model_reader::ModelReader;
-    use crate::*;
-    use nalgebra::*;
+    use super::*;
     use std::collections::HashMap;
     use std::iter::zip;
 
