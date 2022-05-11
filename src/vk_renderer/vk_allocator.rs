@@ -1,4 +1,5 @@
 use super::vk_buffers_suballocator::VkBuffersSubAllocator;
+use super::vk_descriptors_allocator::VkDescriptorsAllocator;
 use ash::vk;
 use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
 use std::cell::RefCell;
@@ -8,6 +9,7 @@ pub struct VkAllocator<'a> {
     allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
     host_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
     device_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
+    descriptor_set_allocator: VkDescriptorsAllocator<'a>,
 }
 
 impl<'a> VkAllocator<'a> {
@@ -21,6 +23,7 @@ impl<'a> VkAllocator<'a> {
             device,
             physical_device,
         )));
+
         let host_uniforms_sub_allocator = VkBuffersSubAllocator::new(
             allocator.clone(),
             vk::BufferUsageFlags::UNIFORM_BUFFER | vk::BufferUsageFlags::TRANSFER_SRC,
@@ -28,6 +31,7 @@ impl<'a> VkAllocator<'a> {
             524_288,
             256,
         );
+
         let device_uniforms_sub_allocator = VkBuffersSubAllocator::new(
             allocator.clone(),
             vk::BufferUsageFlags::UNIFORM_BUFFER
@@ -38,10 +42,23 @@ impl<'a> VkAllocator<'a> {
             524_288,
             256,
         );
+
+        let descriptor_pool_sizes = vec![vk::DescriptorPoolSize {
+            ty: vk::DescriptorType::UNIFORM_BUFFER,
+            descriptor_count: 10,
+        }];
+        let descriptor_set_allocator = VkDescriptorsAllocator::new(
+            device,
+            vk::DescriptorPoolCreateFlags::empty(),
+            1000,
+            descriptor_pool_sizes,
+        );
+
         VkAllocator {
             allocator,
             host_uniforms_sub_allocator,
             device_uniforms_sub_allocator,
+            descriptor_set_allocator,
         }
     }
 
