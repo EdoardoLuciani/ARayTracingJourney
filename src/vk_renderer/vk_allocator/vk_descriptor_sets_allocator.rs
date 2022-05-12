@@ -1,6 +1,6 @@
 use ash::vk;
 
-pub struct VkDescriptorsAllocator<'a> {
+pub struct VkDescriptorSetsAllocator<'a> {
     device: &'a ash::Device,
     descriptor_pool_flags: vk::DescriptorPoolCreateFlags,
     descriptor_pool_max_sets: u32,
@@ -13,14 +13,20 @@ pub struct DescriptorSetAllocation {
     descriptor_pool: vk::DescriptorPool,
 }
 
-impl VkDescriptorsAllocator<'_> {
+impl DescriptorSetAllocation {
+    pub fn get_descriptor_sets(&self) -> &[vk::DescriptorSet] {
+        &self.descriptor_sets
+    }
+}
+
+impl VkDescriptorSetsAllocator<'_> {
     pub fn new(
         device: &ash::Device,
         descriptor_pool_flags: vk::DescriptorPoolCreateFlags,
         descriptor_pool_max_sets: u32,
         descriptor_pool_sizes: Vec<vk::DescriptorPoolSize>,
-    ) -> VkDescriptorsAllocator {
-        VkDescriptorsAllocator {
+    ) -> VkDescriptorSetsAllocator {
+        VkDescriptorSetsAllocator {
             device,
             descriptor_pool_flags: descriptor_pool_flags
                 | vk::DescriptorPoolCreateFlags::FREE_DESCRIPTOR_SET,
@@ -88,7 +94,7 @@ impl VkDescriptorsAllocator<'_> {
     }
 }
 
-impl Drop for VkDescriptorsAllocator<'_> {
+impl Drop for VkDescriptorSetsAllocator<'_> {
     fn drop(&mut self) {
         for pool in self.pools.iter().copied() {
             unsafe {
@@ -125,7 +131,7 @@ mod tests {
                 descriptor_count: 100,
             },
         ];
-        let mut descriptor_set_allocator = VkDescriptorsAllocator::new(
+        let mut descriptor_set_allocator = VkDescriptorSetsAllocator::new(
             bvk.device(),
             vk::DescriptorPoolCreateFlags::empty(),
             2,

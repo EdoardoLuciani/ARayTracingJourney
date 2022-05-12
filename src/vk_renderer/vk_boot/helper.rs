@@ -1,5 +1,5 @@
 use ash::vk;
-use std::ffi::CStr;
+use std::ffi::{CStr, CString};
 use std::fmt::Write;
 use std::fs::File;
 use std::io::Read;
@@ -29,9 +29,10 @@ pub unsafe extern "system" fn vk_debug_callback(
     vk::FALSE
 }
 
-pub fn get_binary_shader_data<T: AsRef<Path>>(
+pub fn vk_create_shader_stage<T: AsRef<Path>>(
     path: T,
-) -> (Vec<u8>, vk::ShaderStageFlags, vk::ShaderModuleCreateInfo) {
+    device: &ash::Device,
+) -> vk::PipelineShaderStageCreateInfo {
     let shader_type_extension = path
         .as_ref()
         .file_stem()
@@ -57,10 +58,22 @@ pub fn get_binary_shader_data<T: AsRef<Path>>(
     let mut data = Vec::<u8>::new();
     file.read_to_end(&mut data).expect("Could not read shader");
 
-    let module_create_info = vk::ShaderModuleCreateInfo {
-        code_size: data.len(),
-        p_code: data.as_ptr() as *const u32,
-        ..vk::ShaderModuleCreateInfo::default()
+    let shader_module = unsafe {
+        let module_create_info = vk::ShaderModuleCreateInfo {
+            code_size: data.len(),
+            p_code: data.as_ptr() as *const u32,
+            ..vk::ShaderModuleCreateInfo::default()
+        };
+        device
+            .create_shader_module(&module_create_info, None)
+            .expect("Could not create shader module")
     };
-    (data, shader_type, module_create_info)
+
+    static SHADER_ENTRY_POINT: CString = CString::new("main").unwrap();
+
+    vk::PipelineShaderStageCreateInfo::builder()
+        .stage(shader_type)
+        .module(shader_module)
+        .name(&ENTRY_POINT)
+        .build()
 }

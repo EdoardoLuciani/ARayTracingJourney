@@ -46,6 +46,9 @@ fn compile_recursively<T: AsRef<Path>>(
                 Some("vert") => shaderc::ShaderKind::Vertex,
                 Some("frag") => shaderc::ShaderKind::Fragment,
                 Some("comp") => shaderc::ShaderKind::Compute,
+                Some("rgen") => shaderc::ShaderKind::RayGeneration,
+                Some("rchit") => shaderc::ShaderKind::ClosestHit,
+                Some("rmiss") => shaderc::ShaderKind::Miss,
                 _ => {
                     continue;
                 }
@@ -78,7 +81,7 @@ fn compile_recursively<T: AsRef<Path>>(
                     is_there_an_error = true;
                 }
             }
-        } else {
+        } else if path.is_dir() {
             is_there_an_error |= compile_recursively(path.as_path(), out_dir.as_ref(), compiler);
         }
     }

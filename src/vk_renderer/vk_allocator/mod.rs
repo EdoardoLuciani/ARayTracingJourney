@@ -1,5 +1,5 @@
 pub mod vk_buffers_suballocator;
-pub mod vk_descriptors_allocator;
+pub mod vk_descriptor_sets_allocator;
 pub mod vk_memory_resource_allocator;
 
 use ash::vk;
@@ -7,14 +7,14 @@ use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
 use std::cell::RefCell;
 use std::rc::Rc;
 use vk_buffers_suballocator::VkBuffersSubAllocator;
-use vk_descriptors_allocator::VkDescriptorsAllocator;
+use vk_descriptor_sets_allocator::VkDescriptorSetsAllocator;
 use vk_memory_resource_allocator::VkMemoryResourceAllocator;
 
 pub struct VkAllocator<'a> {
     allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
     host_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
     device_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
-    descriptor_set_allocator: VkDescriptorsAllocator<'a>,
+    descriptor_sets_allocator: VkDescriptorSetsAllocator<'a>,
 }
 
 impl<'a> VkAllocator<'a> {
@@ -52,7 +52,7 @@ impl<'a> VkAllocator<'a> {
             ty: vk::DescriptorType::UNIFORM_BUFFER,
             descriptor_count: 10,
         }];
-        let descriptor_set_allocator = VkDescriptorsAllocator::new(
+        let descriptor_sets_allocator = VkDescriptorSetsAllocator::new(
             device,
             vk::DescriptorPoolCreateFlags::empty(),
             1000,
@@ -63,7 +63,7 @@ impl<'a> VkAllocator<'a> {
             allocator,
             host_uniforms_sub_allocator,
             device_uniforms_sub_allocator,
-            descriptor_set_allocator,
+            descriptor_sets_allocator,
         }
     }
 
@@ -77,5 +77,9 @@ impl<'a> VkAllocator<'a> {
 
     pub fn get_device_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
         &mut self.device_uniforms_sub_allocator
+    }
+    
+    pub fn get_descriptor_set_allocator_mut(&mut self) -> &mut VkDescriptorSetsAllocator<'a> {
+        &mut self.descriptor_sets_allocator
     }
 }
