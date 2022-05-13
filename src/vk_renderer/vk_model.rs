@@ -993,20 +993,20 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = Rc::new(bvk.device().clone());
+        let device = Rc::new(bvk.get_device().clone());
 
         let command_pool_create_info =
-            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.queue_family_index());
+            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.get_queue_family_index());
         let command_pool = unsafe {
-            bvk.device()
+            bvk.get_device()
                 .create_command_pool(&command_pool_create_info, None)
                 .unwrap()
         };
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
-            bvk.instance().clone(),
+            bvk.get_instance().clone(),
             device.clone(),
-            bvk.physical_device().clone(),
+            bvk.get_physical_device().clone(),
         )));
 
         let mut water_bottle = VkModel::new(
@@ -1023,7 +1023,7 @@ mod tests {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
         let command_buffer = unsafe {
-            bvk.device()
+            bvk.get_device()
                 .allocate_command_buffers(&command_buffer_create_info)
                 .unwrap()
                 .first()
@@ -1032,13 +1032,13 @@ mod tests {
         };
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
-            bvk.device()
+            bvk.get_device()
                 .begin_command_buffer(command_buffer, &begin_command_buffer)
                 .unwrap();
         };
 
         let fence_create_info = vk::FenceCreateInfo::default();
-        let fence = unsafe { bvk.device().create_fence(&fence_create_info, None).unwrap() };
+        let fence = unsafe { bvk.get_device().create_fence(&fence_create_info, None).unwrap() };
 
         water_bottle.update_model_status(&Vector3::from_element(100.0f32), command_buffer);
         assert!(water_bottle
@@ -1084,20 +1084,20 @@ mod tests {
         let queue_submit2 = vk::SubmitInfo2::builder()
             .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
         unsafe {
-            bvk.device().end_command_buffer(command_buffer).unwrap();
+            bvk.get_device().end_command_buffer(command_buffer).unwrap();
 
-            bvk.device()
+            bvk.get_device()
                 .queue_submit2(
-                    *bvk.queues().first().unwrap(),
+                    *bvk.get_queues().first().unwrap(),
                     std::slice::from_ref(&queue_submit2),
                     fence,
                 )
                 .unwrap();
 
-            bvk.device()
+            bvk.get_device()
                 .wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)
                 .unwrap();
-            bvk.device()
+            bvk.get_device()
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();
         }
@@ -1105,7 +1105,7 @@ mod tests {
 
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
-            bvk.device()
+            bvk.get_device()
                 .begin_command_buffer(command_buffer, &begin_command_buffer)
                 .unwrap();
         };
@@ -1119,30 +1119,30 @@ mod tests {
         let queue_submit2 = vk::SubmitInfo2::builder()
             .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
         unsafe {
-            bvk.device()
+            bvk.get_device()
                 .reset_fences(std::slice::from_ref(&fence))
                 .unwrap();
-            bvk.device().end_command_buffer(command_buffer).unwrap();
+            bvk.get_device().end_command_buffer(command_buffer).unwrap();
 
-            bvk.device()
+            bvk.get_device()
                 .queue_submit2(
-                    *bvk.queues().first().unwrap(),
+                    *bvk.get_queues().first().unwrap(),
                     std::slice::from_ref(&queue_submit2),
                     fence,
                 )
                 .unwrap();
 
-            bvk.device()
+            bvk.get_device()
                 .wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)
                 .unwrap();
         }
         water_bottle.reset_command_buffer_submission_status();
 
         unsafe {
-            bvk.device()
+            bvk.get_device()
                 .free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));
-            bvk.device().destroy_command_pool(command_pool, None);
-            bvk.device().destroy_fence(fence, None);
+            bvk.get_device().destroy_command_pool(command_pool, None);
+            bvk.get_device().destroy_fence(fence, None);
         }
 
         let from_device_host_data = {
@@ -1201,16 +1201,16 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = Rc::new(bvk.device().clone());
+        let device = Rc::new(bvk.get_device().clone());
         let acceleration_structure_fp = Rc::new(khr::AccelerationStructure::new(
-            bvk.instance(),
-            bvk.device(),
+            bvk.get_instance(),
+            bvk.get_device(),
         ));
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
-            bvk.instance().clone(),
+            bvk.get_instance().clone(),
             device.clone(),
-            bvk.physical_device().clone(),
+            bvk.get_physical_device().clone(),
         )));
         let mut water_bottle = VkModel::new(
             device.clone(),
@@ -1222,9 +1222,9 @@ mod tests {
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
 
         let command_pool_create_info =
-            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.queue_family_index());
+            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.get_queue_family_index());
         let command_pool = unsafe {
-            bvk.device()
+            bvk.get_device()
                 .create_command_pool(&command_pool_create_info, None)
                 .unwrap()
         };
@@ -1233,13 +1233,13 @@ mod tests {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
         let command_buffer = unsafe {
-            bvk.device()
+            bvk.get_device()
                 .allocate_command_buffers(&command_buffer_create_info)
                 .unwrap()[0]
         };
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
-            bvk.device()
+            bvk.get_device()
                 .begin_command_buffer(command_buffer, &begin_command_buffer)
                 .unwrap();
         };
@@ -1249,7 +1249,7 @@ mod tests {
         assert!(water_bottle.needs_command_buffer_submission());
 
         unsafe {
-            bvk.device().end_command_buffer(command_buffer).unwrap();
+            bvk.get_device().end_command_buffer(command_buffer).unwrap();
         }
 
         let command_buffer_submit_info =
@@ -1257,23 +1257,23 @@ mod tests {
         let queue_submit2 = vk::SubmitInfo2::builder()
             .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
         unsafe {
-            bvk.device()
+            bvk.get_device()
                 .queue_submit2(
-                    *bvk.queues().first().unwrap(),
+                    *bvk.get_queues().first().unwrap(),
                     std::slice::from_ref(&queue_submit2),
                     vk::Fence::null(),
                 )
                 .unwrap();
-            bvk.device().device_wait_idle().unwrap();
-            bvk.device()
+            bvk.get_device().device_wait_idle().unwrap();
+            bvk.get_device()
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();
         }
         water_bottle.reset_command_buffer_submission_status();
         unsafe {
-            bvk.device()
+            bvk.get_device()
                 .free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));
-            bvk.device().destroy_command_pool(command_pool, None);
+            bvk.get_device().destroy_command_pool(command_pool, None);
         }
         assert!(water_bottle
             .state

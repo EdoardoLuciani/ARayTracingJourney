@@ -13,9 +13,9 @@ use std::rc::Rc;
 const DESCRIPTOR_SET_TLAS_BINDING: u32 = 0;
 const DESCRIPTOR_SET_IMAGE_BINDING: u32 = 1;
 
-struct VkRTLightningShadows<'a> {
-    device: &'a ash::Device,
-    ray_tracing_pipeline_fp: &'a khr::RayTracingPipeline,
+pub struct VkRTLightningShadows {
+    device: Rc<ash::Device>,
+    ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
     allocator: Rc<RefCell<VkAllocator>>,
     rendering_resolution: vk::Extent2D,
     descriptor_set_layout: vk::DescriptorSetLayout,
@@ -28,10 +28,10 @@ struct VkRTLightningShadows<'a> {
     sbt_regions: [vk::StridedDeviceAddressRegionKHR; 3],
 }
 
-impl<'a> VkRTLightningShadows<'a> {
+impl VkRTLightningShadows {
     pub fn new(
-        device: &'a ash::Device,
-        ray_tracing_pipeline_fp: &'a khr::RayTracingPipeline,
+        device: Rc<ash::Device>,
+        ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
         ray_tracing_pipeline_properties: &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
         allocator: Rc<RefCell<VkAllocator>>,
         rendering_resolution: vk::Extent2D,
@@ -73,7 +73,7 @@ impl<'a> VkRTLightningShadows<'a> {
             .allocate_descriptor_sets(&[descriptor_set_layout_tlas_image]);
 
         let image_data = Self::create_output_image(
-            device,
+            device.as_ref(),
             allocator
                 .as_ref()
                 .borrow_mut()
@@ -83,15 +83,15 @@ impl<'a> VkRTLightningShadows<'a> {
         );
 
         let pipeline_data = Self::create_ray_tracing_pipeline(
-            device,
-            ray_tracing_pipeline_fp,
+            device.as_ref(),
+            ray_tracing_pipeline_fp.as_ref(),
             shader_spirv_location,
             &[descriptor_set_layout_tlas_image],
         );
 
         let sbt_data = Self::create_shader_binding_table(
-            ray_tracing_pipeline_fp,
-            ray_tracing_pipeline_properties,
+            ray_tracing_pipeline_fp.as_ref(),
+            &ray_tracing_pipeline_properties,
             pipeline_data.1,
             allocator
                 .as_ref()
@@ -390,5 +390,40 @@ impl<'a> VkRTLightningShadows<'a> {
             },
         ];
         (sbt_buffer, sbt_regions)
+    }
+}
+
+impl Drop for VkRTLightningShadows {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_descriptor_set_allocator_mut()
+                .free_descriptor_sets(std::mem::replace(
+                    &mut self.descriptor_set_allocation,
+                    unsafe { std::mem::zeroed() },
+                ));
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_image(std::mem::replace(&mut self.output_image, unsafe {
+                    std::mem::zeroed()
+                }));
+            self.device.destroy_image_view(self.output_image_view, None);
+            self.device
+                .destroy_pipeline_layout(self.pipeline_layout, None);
+            self.device.destroy_pipeline(self.pipeline, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_buffer(std::mem::replace(&mut self.sbt_buffer, unsafe {
+                    std::mem::zeroed()
+                }));
+        }
     }
 }

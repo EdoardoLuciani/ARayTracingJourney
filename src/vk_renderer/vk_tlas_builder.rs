@@ -6,9 +6,9 @@ use std::cell::RefCell;
 use std::ops::DerefMut;
 use std::rc::Rc;
 
-struct VkTlasBuilder<'a> {
-    device: &'a ash::Device,
-    acceleration_structure_fp: &'a khr::AccelerationStructure,
+pub struct VkTlasBuilder {
+    device: Rc<ash::Device>,
+    acceleration_structure_fp: Rc<khr::AccelerationStructure>,
     allocator: Rc<RefCell<VkAllocator>>,
     host_as_instance_struct_buffer: Option<BufferAllocation>,
     device_as_instance_struct_buffer: Option<BufferAllocation>,
@@ -17,10 +17,10 @@ struct VkTlasBuilder<'a> {
     tlas: vk::AccelerationStructureKHR,
 }
 
-impl<'a> VkTlasBuilder<'a> {
+impl VkTlasBuilder {
     pub fn new(
-        device: &'a ash::Device,
-        acceleration_structure_fp: &'a khr::AccelerationStructure,
+        device: Rc<ash::Device>,
+        acceleration_structure_fp: Rc<khr::AccelerationStructure>,
         allocator: Rc<RefCell<VkAllocator>>,
     ) -> Self {
         Self {
@@ -240,7 +240,7 @@ impl<'a> VkTlasBuilder<'a> {
     }
 }
 
-impl Drop for VkTlasBuilder<'_> {
+impl Drop for VkTlasBuilder {
     fn drop(&mut self) {
         unsafe {
             self.acceleration_structure_fp
@@ -297,22 +297,22 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = Rc::new(bvk.device().clone());
+        let device = Rc::new(bvk.get_device().clone());
         let acceleration_structure_fp = Rc::new(khr::AccelerationStructure::new(
-            bvk.instance(),
-            bvk.device(),
+            bvk.get_instance(),
+            bvk.get_device(),
         ));
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
-            bvk.instance().clone(),
+            bvk.get_instance().clone(),
             device.clone(),
-            bvk.physical_device().clone(),
+            bvk.get_physical_device().clone(),
         )));
 
         let command_pool_create_info =
-            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.queue_family_index());
+            vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.get_queue_family_index());
         let command_pool = unsafe {
-            bvk.device()
+            bvk.get_device()
                 .create_command_pool(&command_pool_create_info, None)
                 .unwrap()
         };
@@ -321,13 +321,13 @@ mod tests {
             .level(vk::CommandBufferLevel::PRIMARY)
             .command_buffer_count(1);
         let command_buffer = unsafe {
-            bvk.device()
+            bvk.get_device()
                 .allocate_command_buffers(&command_buffer_create_info)
                 .unwrap()[0]
         };
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
-            bvk.device()
+            bvk.get_device()
                 .begin_command_buffer(command_buffer, &begin_command_buffer)
                 .unwrap();
         };
@@ -341,8 +341,11 @@ mod tests {
         );
         water_bottle.update_model_status(&Vector3::from_element(0.0f32), command_buffer);
 
-        let mut tlas_builder =
-            VkTlasBuilder::new(bvk.device(), &acceleration_structure_fp, allocator.clone());
+        let mut tlas_builder = VkTlasBuilder::new(
+            device.clone(),
+            acceleration_structure_fp.clone(),
+            allocator.clone(),
+        );
 
         unsafe {
             let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
@@ -355,7 +358,7 @@ mod tests {
                 .size(vk::WHOLE_SIZE);
             let dependency_info = vk::DependencyInfo::builder()
                 .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
-            bvk.device()
+            bvk.get_device()
                 .cmd_pipeline_barrier2(command_buffer, &dependency_info);
         }
 
@@ -365,7 +368,7 @@ mod tests {
         );
 
         unsafe {
-            bvk.device().end_command_buffer(command_buffer).unwrap();
+            bvk.get_device().end_command_buffer(command_buffer).unwrap();
         }
 
         let command_buffer_submit_info =
@@ -373,23 +376,23 @@ mod tests {
         let queue_submit2 = vk::SubmitInfo2::builder()
             .command_buffer_infos(std::slice::from_ref(&command_buffer_submit_info));
         unsafe {
-            bvk.device()
+            bvk.get_device()
                 .queue_submit2(
-                    *bvk.queues().first().unwrap(),
+                    *bvk.get_queues().first().unwrap(),
                     std::slice::from_ref(&queue_submit2),
                     vk::Fence::null(),
                 )
                 .unwrap();
-            bvk.device().device_wait_idle().unwrap();
-            bvk.device()
+            bvk.get_device().device_wait_idle().unwrap();
+            bvk.get_device()
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();
         }
         water_bottle.reset_command_buffer_submission_status();
         unsafe {
-            bvk.device()
+            bvk.get_device()
                 .free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));
-            bvk.device().destroy_command_pool(command_pool, None);
+            bvk.get_device().destroy_command_pool(command_pool, None);
         }
     }
 }

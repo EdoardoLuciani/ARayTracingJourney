@@ -344,11 +344,11 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = Rc::new(bvk.device().clone());
+        let device = Rc::new(bvk.get_device().clone());
         let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
-            bvk.instance().clone(),
+            bvk.get_instance().clone(),
             device.clone(),
-            *bvk.physical_device(),
+            bvk.get_physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
             resource_allocator.clone(),
@@ -393,12 +393,12 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = Rc::new(bvk.device().clone());
+        let device = Rc::new(bvk.get_device().clone());
 
         let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
-            bvk.instance().clone(),
+            bvk.get_instance().clone(),
             device.clone(),
-            *bvk.physical_device(),
+            bvk.get_physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
             resource_allocator.clone(),
@@ -434,12 +434,12 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = Rc::new(bvk.device().clone());
+        let device = Rc::new(bvk.get_device().clone());
 
         let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
-            bvk.instance().clone(),
+            bvk.get_instance().clone(),
             device.clone(),
-            *bvk.physical_device(),
+            bvk.get_physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
             resource_allocator.clone(),

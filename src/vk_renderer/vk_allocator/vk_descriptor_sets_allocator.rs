@@ -118,7 +118,7 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = std::rc::Rc::new(bvk.device().clone());
+        let device = std::rc::Rc::new(bvk.get_device().clone());
 
         let descriptor_pool_sizes = [
             vk::DescriptorPoolSize {
@@ -145,7 +145,7 @@ mod tests {
                 .stage_flags(vk::ShaderStageFlags::ALL_GRAPHICS);
             let descriptor_set_layout_create_info = vk::DescriptorSetLayoutCreateInfo::builder()
                 .bindings(std::slice::from_ref(&descriptor_set_layout_binding));
-            bvk.device()
+            bvk.get_device()
                 .create_descriptor_set_layout(&descriptor_set_layout_create_info, None)
                 .unwrap()
         };

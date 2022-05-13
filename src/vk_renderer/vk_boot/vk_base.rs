@@ -27,18 +27,6 @@ pub struct VkBase {
     debug_utils_messenger: vk::DebugUtilsMessengerEXT,
 }
 
-#[derive(Clone)]
-pub struct CommandRecordInfo {
-    pub pool: vk::CommandPool,
-    pub buffers: Vec<vk::CommandBuffer>,
-}
-
-#[derive(Clone)]
-pub struct DescriptorInfo {
-    pub pool: vk::DescriptorPool,
-    pub buffers: Vec<vk::DescriptorSet>,
-}
-
 /**
 BaseVk is struct that initializes a single Vulkan 1.1 instance and device with optional surface support.
 It supports instance creation with extensions and device selection with Vulkan 1.1 features
@@ -380,139 +368,50 @@ impl VkBase {
         }
     }
 
-    pub fn instance(&self) -> &ash::Instance {
+    pub fn get_instance(&self) -> &ash::Instance {
         &self.instance
     }
 
-    pub fn physical_device(&self) -> &vk::PhysicalDevice {
-        &self.physical_device
+    pub fn get_physical_device(&self) -> vk::PhysicalDevice {
+        self.physical_device
     }
 
-    pub fn device(&self) -> &ash::Device {
+    pub fn get_device(&self) -> &ash::Device {
         &self.device
     }
 
-    pub fn queue_family_index(&self) -> u32 {
+    pub fn get_queue_family_index(&self) -> u32 {
         self.queue_family_index
     }
 
-    pub fn queues(&self) -> &[vk::Queue] {
+    pub fn get_queues(&self) -> &[vk::Queue] {
         self.queues.as_slice()
     }
 
-    pub fn swapchain_fn(&self) -> &khr::Swapchain {
+    pub fn get_swapchain_fn(&self) -> &khr::Swapchain {
         self.swapchain_fn
             .as_ref()
             .expect("Swapchain support is not enabled")
     }
 
-    pub fn swapchain_create_info(&self) -> &vk::SwapchainCreateInfoKHR {
+    pub fn get_swapchain_create_info(&self) -> &vk::SwapchainCreateInfoKHR {
         self.swapchain_create_info
             .as_ref()
             .expect("Swapchain support is not enabled")
     }
 
-    pub fn swapchain(&self) -> &vk::SwapchainKHR {
+    pub fn get_swapchain(&self) -> Option<vk::SwapchainKHR> {
         if self.swapchain == vk::SwapchainKHR::null() {
-            panic!("Swapchain support is not enabled");
+            None
+        } else {
+            Some(self.swapchain)
         }
-        &self.swapchain
     }
 
-    pub fn swapchain_image_views(&self) -> &[vk::ImageView] {
+    pub fn get_swapchain_image_views(&self) -> &[vk::ImageView] {
         self.swapchain_image_views
             .as_ref()
             .expect("Swapchain support is not enabled")
-    }
-
-    #[deprecated]
-    pub fn create_cmd_pool_and_buffers(
-        &mut self,
-        pool_flags: vk::CommandPoolCreateFlags,
-        cmdb_level: vk::CommandBufferLevel,
-        cmdb_count: u32,
-    ) -> CommandRecordInfo {
-        let command_pool_create_info = vk::CommandPoolCreateInfo::builder()
-            .flags(pool_flags)
-            .queue_family_index(self.queue_family_index);
-        let pool = unsafe {
-            self.device
-                .create_command_pool(&command_pool_create_info, None)
-                .unwrap()
-        };
-
-        let command_buffers_allocate_info = vk::CommandBufferAllocateInfo::builder()
-            .command_pool(pool)
-            .level(cmdb_level)
-            .command_buffer_count(cmdb_count);
-        let buffers = unsafe {
-            self.device
-                .allocate_command_buffers(&command_buffers_allocate_info)
-                .unwrap()
-        };
-        CommandRecordInfo { pool, buffers }
-    }
-
-    #[deprecated]
-    pub fn destroy_cmd_pool_and_buffers(&mut self, cmri: &CommandRecordInfo) {
-        unsafe {
-            self.device.free_command_buffers(cmri.pool, &cmri.buffers);
-            self.device.destroy_command_pool(cmri.pool, None);
-        }
-    }
-
-    #[deprecated]
-    pub fn create_descriptor_pool_and_sets(
-        &mut self,
-        pool_sizes: &[vk::DescriptorPoolSize],
-        sets: &[vk::DescriptorSetLayout],
-    ) -> DescriptorInfo {
-        let descriptor_pool_create_info = vk::DescriptorPoolCreateInfo::builder()
-            .max_sets(sets.len() as u32)
-            .pool_sizes(pool_sizes);
-        let descriptor_pool = unsafe {
-            self.device
-                .create_descriptor_pool(&descriptor_pool_create_info, None)
-                .unwrap()
-        };
-        let descriptor_set_allocate_info = vk::DescriptorSetAllocateInfo::builder()
-            .descriptor_pool(descriptor_pool)
-            .set_layouts(sets);
-        let descriptor_sets = unsafe {
-            self.device
-                .allocate_descriptor_sets(&descriptor_set_allocate_info)
-                .unwrap()
-        };
-        DescriptorInfo {
-            pool: descriptor_pool,
-            buffers: descriptor_sets,
-        }
-    }
-
-    #[deprecated]
-    pub fn destroy_descriptor_pool_and_sets(&mut self, di: &DescriptorInfo) {
-        unsafe {
-            self.device.destroy_descriptor_pool(di.pool, None);
-        }
-    }
-
-    #[deprecated]
-    pub fn create_semaphores(&mut self, count: u32) -> Vec<vk::Semaphore> {
-        let semaphore_create_info = vk::SemaphoreCreateInfo::builder();
-        (0..count)
-            .map(|_| unsafe {
-                self.device
-                    .create_semaphore(&semaphore_create_info, None)
-                    .unwrap()
-            })
-            .collect()
-    }
-
-    #[deprecated]
-    pub fn destroy_semaphores(&mut self, semaphores: &Vec<vk::Semaphore>) {
-        semaphores
-            .iter()
-            .for_each(|s| unsafe { self.device.destroy_semaphore(*s, None) });
     }
 
     fn create_instance(
