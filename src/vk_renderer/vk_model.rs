@@ -283,7 +283,7 @@ impl VkModelPostSubmissionCleanup for BlasBuild {
 pub struct VkModel<'a> {
     device: &'a ash::Device,
     acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
-    allocator: Rc<RefCell<VkAllocator<'a>>>,
+    allocator: Rc<RefCell<VkAllocator>>,
     model_path: String,
     model_bounding_sphere: Option<Sphere>,
     uniform: VkModelUniform,
@@ -301,7 +301,7 @@ impl<'a> VkModel<'a> {
     pub fn new(
         device: &'a ash::Device,
         acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
-        allocator: Rc<RefCell<VkAllocator<'a>>>,
+        allocator: Rc<RefCell<VkAllocator>>,
         model_path: String,
         model_matrix: Matrix3x4<f32>,
     ) -> Self {
@@ -987,6 +987,7 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = Rc::new(bvk.device().clone());
 
         let command_pool_create_info =
             vk::CommandPoolCreateInfo::builder().queue_family_index(bvk.queue_family_index());
@@ -998,7 +999,7 @@ mod tests {
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.instance().clone(),
-            bvk.device(),
+            device.clone(),
             bvk.physical_device().clone(),
         )));
 
@@ -1194,12 +1195,13 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = std::rc::Rc::new(bvk.device().clone());
         let acceleration_structure_fp =
             khr::AccelerationStructure::new(bvk.instance(), bvk.device());
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.instance().clone(),
-            bvk.device(),
+            device.clone(),
             bvk.physical_device().clone(),
         )));
         let mut water_bottle = VkModel::new(

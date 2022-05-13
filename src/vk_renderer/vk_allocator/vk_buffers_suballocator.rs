@@ -9,8 +9,8 @@ use std::ops::Bound::*;
 use std::ptr::NonNull;
 use std::rc::Rc;
 
-pub struct VkBuffersSubAllocator<'a> {
-    allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
+pub struct VkBuffersSubAllocator {
+    allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
     buffers_usage: vk::BufferUsageFlags,
     buffers_location: MemoryLocation,
     blocks_initial_size: usize,
@@ -63,9 +63,9 @@ impl SubAllocationData {
     }
 }
 
-impl<'a> VkBuffersSubAllocator<'a> {
+impl VkBuffersSubAllocator {
     pub fn new(
-        allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
+        allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
         buffers_usage: vk::BufferUsageFlags,
         buffers_location: MemoryLocation,
         blocks_initial_size: usize,
@@ -344,9 +344,10 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = Rc::new(bvk.device().clone());
         let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
-            &bvk.device(),
+            device.clone(),
             *bvk.physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
@@ -392,9 +393,11 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = Rc::new(bvk.device().clone());
+
         let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
-            &bvk.device(),
+            device.clone(),
             *bvk.physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(
@@ -431,9 +434,11 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = Rc::new(bvk.device().clone());
+
         let resource_allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             bvk.instance().clone(),
-            &bvk.device(),
+            device.clone(),
             *bvk.physical_device(),
         )));
         let mut allocator = VkBuffersSubAllocator::new(

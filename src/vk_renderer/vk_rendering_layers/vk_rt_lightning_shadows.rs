@@ -16,7 +16,7 @@ const DESCRIPTOR_SET_IMAGE_BINDING: u32 = 1;
 struct VkRTLightningShadows<'a> {
     device: &'a ash::Device,
     ray_tracing_pipeline_fp: &'a khr::RayTracingPipeline,
-    allocator: Rc<RefCell<VkAllocator<'a>>>,
+    allocator: Rc<RefCell<VkAllocator>>,
     rendering_resolution: vk::Extent2D,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_set_allocation: DescriptorSetAllocation,
@@ -33,7 +33,7 @@ impl<'a> VkRTLightningShadows<'a> {
         device: &'a ash::Device,
         ray_tracing_pipeline_fp: &'a khr::RayTracingPipeline,
         ray_tracing_pipeline_properties: &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
-        allocator: Rc<RefCell<VkAllocator<'a>>>,
+        allocator: Rc<RefCell<VkAllocator>>,
         rendering_resolution: vk::Extent2D,
         shader_spirv_location: &Path,
     ) -> Self {

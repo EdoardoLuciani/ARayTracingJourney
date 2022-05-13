@@ -10,22 +10,22 @@ use vk_buffers_suballocator::VkBuffersSubAllocator;
 use vk_descriptor_sets_allocator::VkDescriptorSetsAllocator;
 use vk_memory_resource_allocator::VkMemoryResourceAllocator;
 
-pub struct VkAllocator<'a> {
-    allocator: Rc<RefCell<VkMemoryResourceAllocator<'a>>>,
-    host_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
-    device_uniforms_sub_allocator: VkBuffersSubAllocator<'a>,
-    descriptor_sets_allocator: VkDescriptorSetsAllocator<'a>,
+pub struct VkAllocator {
+    allocator: Rc<RefCell<VkMemoryResourceAllocator>>,
+    host_uniforms_sub_allocator: VkBuffersSubAllocator,
+    device_uniforms_sub_allocator: VkBuffersSubAllocator,
+    descriptor_sets_allocator: VkDescriptorSetsAllocator,
 }
 
-impl<'a> VkAllocator<'a> {
+impl VkAllocator {
     pub fn new(
         instance: ash::Instance,
-        device: &'a ash::Device,
+        device: Rc<ash::Device>,
         physical_device: vk::PhysicalDevice,
     ) -> Self {
         let allocator = Rc::new(RefCell::new(VkMemoryResourceAllocator::new(
             instance,
-            device,
+            device.clone(),
             physical_device,
         )));
 
@@ -53,7 +53,7 @@ impl<'a> VkAllocator<'a> {
             descriptor_count: 10,
         }];
         let descriptor_sets_allocator = VkDescriptorSetsAllocator::new(
-            device,
+            device.clone(),
             vk::DescriptorPoolCreateFlags::empty(),
             1000,
             descriptor_pool_sizes,
@@ -67,19 +67,19 @@ impl<'a> VkAllocator<'a> {
         }
     }
 
-    pub fn get_allocator_mut(&mut self) -> std::cell::RefMut<VkMemoryResourceAllocator<'a>> {
+    pub fn get_allocator_mut(&mut self) -> std::cell::RefMut<VkMemoryResourceAllocator> {
         self.allocator.as_ref().borrow_mut()
     }
 
-    pub fn get_host_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
+    pub fn get_host_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator {
         &mut self.host_uniforms_sub_allocator
     }
 
-    pub fn get_device_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator<'a> {
+    pub fn get_device_uniform_sub_allocator_mut(&mut self) -> &mut VkBuffersSubAllocator {
         &mut self.device_uniforms_sub_allocator
     }
-    
-    pub fn get_descriptor_set_allocator_mut(&mut self) -> &mut VkDescriptorSetsAllocator<'a> {
+
+    pub fn get_descriptor_set_allocator_mut(&mut self) -> &mut VkDescriptorSetsAllocator {
         &mut self.descriptor_sets_allocator
     }
 }

@@ -9,7 +9,7 @@ use std::rc::Rc;
 struct VkTlasBuilder<'a> {
     device: &'a ash::Device,
     acceleration_structure_fp: &'a khr::AccelerationStructure,
-    allocator: Rc<RefCell<VkAllocator<'a>>>,
+    allocator: Rc<RefCell<VkAllocator>>,
     host_as_instance_struct_buffer: Option<BufferAllocation>,
     device_as_instance_struct_buffer: Option<BufferAllocation>,
     scratch_buffer: Option<BufferAllocation>,
@@ -21,7 +21,7 @@ impl<'a> VkTlasBuilder<'a> {
     pub fn new(
         device: &'a ash::Device,
         acceleration_structure_fp: &'a khr::AccelerationStructure,
-        allocator: Rc<RefCell<VkAllocator<'a>>>,
+        allocator: Rc<RefCell<VkAllocator>>,
     ) -> Self {
         Self {
             device,
@@ -296,12 +296,13 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = Rc::new(bvk.device().clone());
         let acceleration_structure_fp =
             khr::AccelerationStructure::new(bvk.instance(), bvk.device());
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.instance().clone(),
-            bvk.device(),
+            device.clone(),
             bvk.physical_device().clone(),
         )));
 

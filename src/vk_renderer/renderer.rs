@@ -10,7 +10,12 @@ struct FrameData {
     main_command: vk_base::CommandRecordInfo,
 }
 
-pub struct VulkanTempleRayTracedRenderer {}
+pub struct VulkanTempleRayTracedRenderer {
+    bvk: vk_base::VkBase,
+    device: Rc<ash::Device>,
+    acceleration_structure_fp: Rc<khr::AccelerationStructure>,
+    ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
+}
 
 impl VulkanTempleRayTracedRenderer {
     pub fn new(window_size: (u32, u32), window_handle: raw_window_handle::RawWindowHandle) -> Self {
@@ -41,16 +46,27 @@ impl VulkanTempleRayTracedRenderer {
             std::slice::from_ref(&(vk::QueueFlags::GRAPHICS, 1.0f32)),
             Some(window_handle),
         );
-        let acceleration_structure_fp =
-            khr::AccelerationStructure::new(bvk.instance(), bvk.device());
+
+        let device = Rc::new(bvk.device().clone());
+        let acceleration_structure_fp = Rc::new(khr::AccelerationStructure::new(
+            bvk.instance(),
+            bvk.device(),
+        ));
+        let ray_tracing_pipeline_fp =
+            Rc::new(khr::RayTracingPipeline::new(bvk.instance(), bvk.device()));
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.instance().clone(),
-            bvk.device(),
+            device.clone(),
             bvk.physical_device().clone(),
         )));
 
-        VulkanTempleRayTracedRenderer {}
+        VulkanTempleRayTracedRenderer {
+            bvk,
+            device,
+            acceleration_structure_fp,
+            ray_tracing_pipeline_fp,
+        }
     }
 
     pub fn add_model(file_path: &std::path::Path, model_matrix: Matrix4<f32>) {}

@@ -1,7 +1,8 @@
 use ash::vk;
+use std::ops::Deref;
 
-pub struct VkDescriptorSetsAllocator<'a> {
-    device: &'a ash::Device,
+pub struct VkDescriptorSetsAllocator {
+    device: std::rc::Rc<ash::Device>,
     descriptor_pool_flags: vk::DescriptorPoolCreateFlags,
     descriptor_pool_max_sets: u32,
     descriptor_pool_sizes: Vec<vk::DescriptorPoolSize>,
@@ -19,9 +20,9 @@ impl DescriptorSetAllocation {
     }
 }
 
-impl VkDescriptorSetsAllocator<'_> {
+impl VkDescriptorSetsAllocator {
     pub fn new(
-        device: &ash::Device,
+        device: std::rc::Rc<ash::Device>,
         descriptor_pool_flags: vk::DescriptorPoolCreateFlags,
         descriptor_pool_max_sets: u32,
         descriptor_pool_sizes: Vec<vk::DescriptorPoolSize>,
@@ -42,17 +43,14 @@ impl VkDescriptorSetsAllocator<'_> {
     ) -> DescriptorSetAllocation {
         let mut descriptor_set_allocate_info =
             vk::DescriptorSetAllocateInfo::builder().set_layouts(set_layouts);
-        let mut alloc = |pool| {
+        let mut alloc = |device: &ash::Device, pool: vk::DescriptorPool| {
             descriptor_set_allocate_info.descriptor_pool = pool;
-            unsafe {
-                self.device
-                    .allocate_descriptor_sets(&descriptor_set_allocate_info)
-            }
+            unsafe { device.allocate_descriptor_sets(&descriptor_set_allocate_info) }
         };
 
         // iter in the existing pools to search for a viable pool
         for pool in self.pools.iter().copied() {
-            if let Ok(sets) = alloc(pool) {
+            if let Ok(sets) = alloc(self.device.deref(), pool) {
                 return DescriptorSetAllocation {
                     descriptor_sets: sets,
                     descriptor_pool: pool,
@@ -63,7 +61,7 @@ impl VkDescriptorSetsAllocator<'_> {
         // if all pools are exhausted create a new one
         let pool = self.create_pool();
         DescriptorSetAllocation {
-            descriptor_sets: alloc(pool).expect("Empty created pool is not viable for the requested sets layout, consider changing constructor flags"),
+            descriptor_sets: alloc(self.device.deref(), pool).expect("Empty created pool is not viable for the requested sets layout, consider changing constructor flags"),
             descriptor_pool: pool,
         }
     }
@@ -94,7 +92,7 @@ impl VkDescriptorSetsAllocator<'_> {
     }
 }
 
-impl Drop for VkDescriptorSetsAllocator<'_> {
+impl Drop for VkDescriptorSetsAllocator {
     fn drop(&mut self) {
         for pool in self.pools.iter().copied() {
             unsafe {
@@ -120,6 +118,7 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
+        let device = std::rc::Rc::new(bvk.device().clone());
 
         let descriptor_pool_sizes = [
             vk::DescriptorPoolSize {
@@ -132,7 +131,7 @@ mod tests {
             },
         ];
         let mut descriptor_set_allocator = VkDescriptorSetsAllocator::new(
-            bvk.device(),
+            device.clone(),
             vk::DescriptorPoolCreateFlags::empty(),
             2,
             descriptor_pool_sizes.to_vec(),

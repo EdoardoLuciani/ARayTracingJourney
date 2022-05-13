@@ -1,21 +1,21 @@
 use ash::vk;
 use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
 
-pub struct VkMemoryResourceAllocator<'a> {
-    device: &'a ash::Device,
+pub struct VkMemoryResourceAllocator {
+    device: std::rc::Rc<ash::Device>,
     allocator: vkalloc::Allocator,
 }
 
-impl<'a> VkMemoryResourceAllocator<'a> {
+impl VkMemoryResourceAllocator {
     pub fn new(
         instance: ash::Instance,
-        device: &'a ash::Device,
+        device: std::rc::Rc<ash::Device>,
         physical_device: vk::PhysicalDevice,
     ) -> Self {
         let allocator =
             gpu_allocator::vulkan::Allocator::new(&gpu_allocator::vulkan::AllocatorCreateDesc {
                 instance,
-                device: device.clone(),
+                device: device.as_ref().clone(),
                 physical_device,
                 debug_settings: Default::default(),
                 buffer_device_address: true,
