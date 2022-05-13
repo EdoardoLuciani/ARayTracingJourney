@@ -69,11 +69,9 @@ pub fn vk_create_shader_stage<T: AsRef<Path>>(
             .expect("Could not create shader module")
     };
 
-    static SHADER_ENTRY_POINT: CString = CString::new("main").unwrap();
-
     vk::PipelineShaderStageCreateInfo::builder()
         .stage(shader_type)
         .module(shader_module)
-        .name(&ENTRY_POINT)
+        .name(unsafe { CStr::from_bytes_with_nul_unchecked("main/0".as_ref()) })
         .build()
 }

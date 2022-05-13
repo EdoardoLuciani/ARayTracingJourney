@@ -352,7 +352,13 @@ impl<'a> VkModel<'a> {
     }
 
     pub fn get_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let matrix: [f32; 12] = self.uniform.model_matrix.as_slice().try_into().unwrap();
+        let matrix: [f32; 12] = self
+            .uniform
+            .model_matrix
+            .data
+            .as_slice()
+            .try_into()
+            .unwrap();
         vk::TransformMatrixKHR { matrix }
     }
 

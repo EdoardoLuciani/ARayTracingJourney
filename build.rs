@@ -58,12 +58,18 @@ fn compile_recursively<T: AsRef<Path>>(
             shader_file
                 .read_to_string(&mut shader_contents)
                 .expect("Could not read {path} contents");
+
+            let mut compiler_options = shaderc::CompileOptions::new();
+            compiler_options
+                .as_mut()
+                .unwrap()
+                .set_target_spirv(shaderc::SpirvVersion::V1_6);
             let compilation_result = compiler.compile_into_spirv(
                 &shader_contents,
                 shader_kind,
                 path.to_str().unwrap(),
                 "main",
-                None,
+                compiler_options.as_ref(),
             );
             match compilation_result {
                 Ok(v) => {
