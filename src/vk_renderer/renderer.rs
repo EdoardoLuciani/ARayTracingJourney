@@ -1,5 +1,6 @@
 use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
+use crate::vk_renderer::vk_model::VkModel;
 use ash::{extensions::*, vk};
 use nalgebra::*;
 use std::cell::RefCell;
@@ -15,6 +16,8 @@ pub struct VulkanTempleRayTracedRenderer {
     device: Rc<ash::Device>,
     acceleration_structure_fp: Rc<khr::AccelerationStructure>,
     ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
+    allocator: Rc<RefCell<VkAllocator>>,
+    models: Vec<VkModel>,
 }
 
 impl VulkanTempleRayTracedRenderer {
@@ -66,8 +69,18 @@ impl VulkanTempleRayTracedRenderer {
             device,
             acceleration_structure_fp,
             ray_tracing_pipeline_fp,
+            allocator,
+            models: Vec::default(),
         }
     }
 
-    pub fn add_model(file_path: &std::path::Path, model_matrix: Matrix4<f32>) {}
+    pub fn add_model(&mut self, file_path: &std::path::Path, model_matrix: Matrix3x4<f32>) {
+        self.models.push(VkModel::new(
+            self.device.clone(),
+            Some(self.acceleration_structure_fp.clone()),
+            self.allocator.clone(),
+            file_path.to_path_buf(),
+            model_matrix,
+        ));
+    }
 }

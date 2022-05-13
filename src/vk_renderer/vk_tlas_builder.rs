@@ -268,6 +268,7 @@ mod tests {
     use crate::vk_renderer::vk_boot::vk_base::VkBase;
     use crate::vk_renderer::vk_model::VkModel;
     use nalgebra::*;
+    use std::path::PathBuf;
 
     #[test]
     fn tlas_build() {
@@ -297,8 +298,10 @@ mod tests {
             None,
         );
         let device = Rc::new(bvk.device().clone());
-        let acceleration_structure_fp =
-            khr::AccelerationStructure::new(bvk.instance(), bvk.device());
+        let acceleration_structure_fp = Rc::new(khr::AccelerationStructure::new(
+            bvk.instance(),
+            bvk.device(),
+        ));
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.instance().clone(),
@@ -330,10 +333,10 @@ mod tests {
         };
 
         let mut water_bottle = VkModel::new(
-            bvk.device(),
-            Some(&acceleration_structure_fp),
+            device.clone(),
+            Some(acceleration_structure_fp.clone()),
             allocator.clone(),
-            String::from("assets/models/WaterBottle.glb"),
+            PathBuf::from("assets/models/WaterBottle.glb"),
             Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
         );
         water_bottle.update_model_status(&Vector3::from_element(0.0f32), command_buffer);

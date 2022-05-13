@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
+use std::path::PathBuf;
 use std::rc::Rc;
 
 use ash::{extensions::*, vk};
@@ -176,6 +177,7 @@ impl VkModelTransferLocation for Device {
             unsafe {
                 vk_model
                     .acceleration_structure_fp
+                    .as_ref()
                     .unwrap()
                     .destroy_acceleration_structure(acceleration_structure, None);
             }
@@ -206,6 +208,7 @@ impl VkModelTransferLocation for Device {
                 unsafe {
                     vk_model
                         .acceleration_structure_fp
+                        .as_ref()
                         .unwrap()
                         .destroy_acceleration_structure(acceleration_structure, None);
                 }
@@ -280,11 +283,11 @@ impl VkModelPostSubmissionCleanup for BlasBuild {
     }
 }
 
-pub struct VkModel<'a> {
-    device: &'a ash::Device,
-    acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
+pub struct VkModel {
+    device: Rc<ash::Device>,
+    acceleration_structure_fp: Option<Rc<khr::AccelerationStructure>>,
     allocator: Rc<RefCell<VkAllocator>>,
-    model_path: String,
+    model_path: PathBuf,
     model_bounding_sphere: Option<Sphere>,
     uniform: VkModelUniform,
     state: Option<Box<dyn VkModelTransferLocation>>,
@@ -297,12 +300,12 @@ struct VkModelUniform {
     model_matrix: Matrix3x4<f32>,
 }
 
-impl<'a> VkModel<'a> {
+impl VkModel {
     pub fn new(
-        device: &'a ash::Device,
-        acceleration_structure_fp: Option<&'a khr::AccelerationStructure>,
+        device: Rc<ash::Device>,
+        acceleration_structure_fp: Option<Rc<khr::AccelerationStructure>>,
         allocator: Rc<RefCell<VkAllocator>>,
-        model_path: String,
+        model_path: PathBuf,
         model_matrix: Matrix3x4<f32>,
     ) -> Self {
         let mut model = VkModel {
@@ -859,6 +862,7 @@ impl<'a> VkModel<'a> {
 
         let as_size_info = unsafe {
             self.acceleration_structure_fp
+                .as_ref()
                 .unwrap()
                 .get_acceleration_structure_build_sizes(
                     vk::AccelerationStructureBuildTypeKHR::DEVICE,
@@ -891,6 +895,7 @@ impl<'a> VkModel<'a> {
                 .size(as_size_info.acceleration_structure_size)
                 .ty(as_build_info.ty);
             self.acceleration_structure_fp
+                .as_ref()
                 .unwrap()
                 .create_acceleration_structure(&as_create_info, None)
                 .unwrap()
@@ -937,6 +942,7 @@ impl<'a> VkModel<'a> {
             self.device.cmd_pipeline_barrier2(cb, &dependancy_info);
 
             self.acceleration_structure_fp
+                .as_ref()
                 .unwrap()
                 .cmd_build_acceleration_structures(
                     cb,
@@ -952,7 +958,7 @@ impl<'a> VkModel<'a> {
     }
 }
 
-impl<'a> Drop for VkModel<'a> {
+impl Drop for VkModel {
     fn drop(&mut self) {
         if let Some(state) = self.state.take() {
             state.to_disk(self);
@@ -1004,10 +1010,10 @@ mod tests {
         )));
 
         let mut water_bottle = VkModel::new(
-            bvk.device(),
+            device.clone(),
             None,
             allocator.clone(),
-            String::from("assets/models/WaterBottle.glb"),
+            PathBuf::from("assets/models/WaterBottle.glb"),
             Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
         );
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
@@ -1195,9 +1201,11 @@ mod tests {
             &[(vk::QueueFlags::GRAPHICS, 1.0f32)],
             None,
         );
-        let device = std::rc::Rc::new(bvk.device().clone());
-        let acceleration_structure_fp =
-            khr::AccelerationStructure::new(bvk.instance(), bvk.device());
+        let device = Rc::new(bvk.device().clone());
+        let acceleration_structure_fp = Rc::new(khr::AccelerationStructure::new(
+            bvk.instance(),
+            bvk.device(),
+        ));
 
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.instance().clone(),
@@ -1205,10 +1213,10 @@ mod tests {
             bvk.physical_device().clone(),
         )));
         let mut water_bottle = VkModel::new(
-            bvk.device(),
-            Some(&acceleration_structure_fp),
+            device.clone(),
+            Some(acceleration_structure_fp.clone()),
             allocator.clone(),
-            String::from("assets/models/WaterBottle.glb"),
+            PathBuf::from("assets/models/WaterBottle.glb"),
             Matrix4::<f32>::new_translation(&Vector3::<f32>::from_element(0.0f32)).remove_row(3),
         );
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
