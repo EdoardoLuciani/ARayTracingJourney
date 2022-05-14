@@ -215,6 +215,18 @@ impl VkTlasBuilder {
         self.tlas
     }
 
+    pub fn get_tlas(&self) -> Option<vk::AccelerationStructureKHR> {
+        if self.tlas == vk::AccelerationStructureKHR::null() {
+            None
+        } else {
+            Some(self.tlas)
+        }
+    }
+
+    pub fn get_tlas_buffer(&self) -> Option<vk::Buffer> {
+        self.tlas_buffer.as_ref().map(|b| b.get_buffer())
+    }
+
     fn update_buffer(
         allocator: &mut VkAllocator,
         buffer: &mut Option<BufferAllocation>,

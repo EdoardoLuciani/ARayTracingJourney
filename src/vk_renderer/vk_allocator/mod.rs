@@ -54,7 +54,7 @@ impl VkAllocator {
         }];
         let descriptor_sets_allocator = VkDescriptorSetsAllocator::new(
             device.clone(),
-            vk::DescriptorPoolCreateFlags::empty(),
+            vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND,
             1000,
             descriptor_pool_sizes,
         );

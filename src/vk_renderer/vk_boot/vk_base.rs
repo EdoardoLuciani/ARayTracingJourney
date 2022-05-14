@@ -20,7 +20,8 @@ pub struct VkBase {
     swapchain_fn: Option<khr::Swapchain>,
     swapchain_create_info: Option<vk::SwapchainCreateInfoKHR>,
     swapchain: vk::SwapchainKHR,
-    swapchain_image_views: Option<Vec<vk::ImageView>>,
+    swapchain_images: Vec<vk::Image>,
+    swapchain_image_views: Vec<vk::ImageView>,
     #[cfg(debug_assertions)]
     debug_utils_fn: ext::DebugUtils,
     #[cfg(debug_assertions)]
@@ -220,7 +221,8 @@ impl VkBase {
             swapchain_fn,
             swapchain_create_info: None,
             swapchain: vk::SwapchainKHR::null(),
-            swapchain_image_views: None,
+            swapchain_images: Vec::default(),
+            swapchain_image_views: Vec::default(),
             #[cfg(debug_assertions)]
             debug_utils_fn,
             #[cfg(debug_assertions)]
@@ -329,42 +331,40 @@ impl VkBase {
                 .create_swapchain(&self.swapchain_create_info.unwrap(), None)
                 .expect("Could not create swapchain");
 
-            if let Some(swapchain_image_views) = &mut self.swapchain_image_views {
-                swapchain_image_views
-                    .iter()
-                    .for_each(|siv| self.device.destroy_image_view(*siv, None));
-                swapchain_image_views.clear();
-            } else {
-                self.swapchain_image_views = Some(Vec::new());
-            }
-
-            let swapchain_images = self
+            self.swapchain_images = self
                 .swapchain_fn
                 .as_ref()
                 .unwrap()
                 .get_swapchain_images(self.swapchain)
                 .unwrap();
-            for swapchain_image in swapchain_images.iter() {
-                let image_view_create_info = vk::ImageViewCreateInfo::builder()
-                    .image(*swapchain_image)
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(self.swapchain_create_info.unwrap().image_format)
-                    .components(vk::ComponentMapping::default())
-                    .subresource_range(
-                        vk::ImageSubresourceRange::builder()
-                            .aspect_mask(vk::ImageAspectFlags::COLOR)
-                            .base_mip_level(0)
-                            .level_count(1)
-                            .base_array_layer(0)
-                            .layer_count(1)
-                            .build(),
-                    );
-                self.swapchain_image_views.as_mut().unwrap().push(
+
+            self.swapchain_image_views
+                .drain(..)
+                .for_each(|siv| self.device.destroy_image_view(siv, None));
+            self.swapchain_image_views = self
+                .swapchain_images
+                .iter()
+                .copied()
+                .map(|swapchain_image| {
+                    let image_view_create_info = vk::ImageViewCreateInfo::builder()
+                        .image(swapchain_image)
+                        .view_type(vk::ImageViewType::TYPE_2D)
+                        .format(self.swapchain_create_info.unwrap().image_format)
+                        .components(vk::ComponentMapping::default())
+                        .subresource_range(
+                            vk::ImageSubresourceRange::builder()
+                                .aspect_mask(vk::ImageAspectFlags::COLOR)
+                                .base_mip_level(0)
+                                .level_count(1)
+                                .base_array_layer(0)
+                                .layer_count(1)
+                                .build(),
+                        );
                     self.device
                         .create_image_view(&image_view_create_info, None)
-                        .unwrap(),
-                );
-            }
+                        .unwrap()
+                })
+                .collect::<Vec<_>>();
         }
     }
 
@@ -408,10 +408,12 @@ impl VkBase {
         }
     }
 
+    pub fn get_swapchain_images(&self) -> &[vk::Image] {
+        &self.swapchain_images
+    }
+
     pub fn get_swapchain_image_views(&self) -> &[vk::ImageView] {
-        self.swapchain_image_views
-            .as_ref()
-            .expect("Swapchain support is not enabled")
+        &self.swapchain_image_views
     }
 
     fn create_instance(
@@ -554,12 +556,11 @@ impl VkBase {
 impl Drop for VkBase {
     fn drop(&mut self) {
         unsafe {
-            if let Some(swapchain_image_views) = self.swapchain_image_views.as_ref() {
-                for swapchain_image_view in swapchain_image_views.iter() {
-                    self.device.destroy_image_view(*swapchain_image_view, None);
-                }
-            }
-
+            self.swapchain_image_views
+                .drain(..)
+                .for_each(|swapchain_image_view| {
+                    self.device.destroy_image_view(swapchain_image_view, None);
+                });
             if let Some(fp) = self.swapchain_fn.as_ref() {
                 fp.destroy_swapchain(self.swapchain, None);
             }

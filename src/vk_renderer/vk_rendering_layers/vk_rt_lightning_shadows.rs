@@ -36,6 +36,7 @@ impl VkRTLightningShadows {
         allocator: Rc<RefCell<VkAllocator>>,
         rendering_resolution: vk::Extent2D,
         shader_spirv_location: &Path,
+        output_format: vk::Format,
     ) -> Self {
         let descriptor_set_layout_tlas_image = unsafe {
             let descriptor_set_bindings = [
@@ -80,6 +81,7 @@ impl VkRTLightningShadows {
                 .get_allocator_mut()
                 .deref_mut(),
             rendering_resolution,
+            output_format,
         );
 
         let pipeline_data = Self::create_ray_tracing_pipeline(
@@ -207,10 +209,11 @@ impl VkRTLightningShadows {
         device: &ash::Device,
         allocator: &mut VkMemoryResourceAllocator,
         resolution: vk::Extent2D,
+        format: vk::Format,
     ) -> (ImageAllocation, vk::ImageView) {
         let image_ci = vk::ImageCreateInfo::builder()
             .image_type(vk::ImageType::TYPE_2D)
-            .format(vk::Format::R8G8B8_UNORM)
+            .format(format)
             .extent(vk::Extent3D {
                 width: resolution.width,
                 height: resolution.height,
@@ -227,7 +230,7 @@ impl VkRTLightningShadows {
         let image_view_ci = vk::ImageViewCreateInfo::builder()
             .image(image_allocation.get_image())
             .view_type(vk::ImageViewType::TYPE_2D)
-            .format(vk::Format::R8G8B8_UNORM)
+            .format(format)
             .components(vk::ComponentMapping::default())
             .subresource_range(
                 vk::ImageSubresourceRange::builder()
@@ -250,19 +253,19 @@ impl VkRTLightningShadows {
     ) -> (vk::PipelineLayout, vk::Pipeline) {
         let shader_stages = [
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "raytrace.rgen.spv"]
+                [path.to_str().unwrap(), "raytrace.rgen.spirv"]
                     .iter()
                     .collect::<std::path::PathBuf>(),
                 device,
             ),
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "raytrace.rmiss.spv"]
+                [path.to_str().unwrap(), "raytrace.rmiss.spirv"]
                     .iter()
                     .collect::<std::path::PathBuf>(),
                 device,
             ),
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "raytrace.chit.spv"]
+                [path.to_str().unwrap(), "raytrace.rchit.spirv"]
                     .iter()
                     .collect::<std::path::PathBuf>(),
                 device,
@@ -404,15 +407,16 @@ impl Drop for VkRTLightningShadows {
                 .get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
-                    unsafe { std::mem::zeroed() },
+                    std::mem::zeroed(),
                 ));
             self.allocator
                 .as_ref()
                 .borrow_mut()
                 .get_allocator_mut()
-                .destroy_image(std::mem::replace(&mut self.output_image, unsafe {
-                    std::mem::zeroed()
-                }));
+                .destroy_image(std::mem::replace(
+                    &mut self.output_image,
+                    std::mem::zeroed(),
+                ));
             self.device.destroy_image_view(self.output_image_view, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
@@ -421,9 +425,7 @@ impl Drop for VkRTLightningShadows {
                 .as_ref()
                 .borrow_mut()
                 .get_allocator_mut()
-                .destroy_buffer(std::mem::replace(&mut self.sbt_buffer, unsafe {
-                    std::mem::zeroed()
-                }));
+                .destroy_buffer(std::mem::replace(&mut self.sbt_buffer, std::mem::zeroed()));
         }
     }
 }

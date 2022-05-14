@@ -72,6 +72,6 @@ pub fn vk_create_shader_stage<T: AsRef<Path>>(
     vk::PipelineShaderStageCreateInfo::builder()
         .stage(shader_type)
         .module(shader_module)
-        .name(unsafe { CStr::from_bytes_with_nul_unchecked("main/0".as_ref()) })
+        .name(CStr::from_bytes_with_nul(b"main\0").unwrap())
         .build()
 }
