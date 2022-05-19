@@ -62,6 +62,7 @@ impl VkRTLightningShadows {
                     .binding_flags(&binding_flags);
             let descriptor_set_layout_ci = vk::DescriptorSetLayoutCreateInfo::builder()
                 .push_next(&mut descriptor_set_layout_binding_flags_ci)
+                .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
                 .bindings(&descriptor_set_bindings);
             device
                 .create_descriptor_set_layout(&descriptor_set_layout_ci, None)
@@ -134,6 +135,26 @@ impl VkRTLightningShadows {
 
     pub fn trace_rays(&self, cb: vk::CommandBuffer) {
         unsafe {
+            let image_memory_barrier = vk::ImageMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                .src_access_mask(vk::AccessFlags2::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::GENERAL)
+                .image(self.output_image.get_image())
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build();
+            let dependency_info = vk::DependencyInfo::builder()
+                .image_memory_barriers(std::slice::from_ref(&image_memory_barrier));
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
+
             self.device.cmd_bind_pipeline(
                 cb,
                 vk::PipelineBindPoint::RAY_TRACING_KHR,
@@ -173,13 +194,14 @@ impl VkRTLightningShadows {
         let mut write_descriptor_set_acceleration_structure =
             vk::WriteDescriptorSetAccelerationStructureKHR::builder()
                 .acceleration_structures(std::slice::from_ref(&tlas));
-        let descriptor_set_write = vk::WriteDescriptorSet::builder()
+        let mut descriptor_set_write = vk::WriteDescriptorSet::builder()
             .push_next(&mut write_descriptor_set_acceleration_structure)
             .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
             .dst_binding(DESCRIPTOR_SET_TLAS_BINDING)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
             .build();
+        descriptor_set_write.descriptor_count = 1;
         unsafe {
             self.device
                 .update_descriptor_sets(&[descriptor_set_write], &[]);
@@ -187,21 +209,19 @@ impl VkRTLightningShadows {
     }
 
     fn update_output_image_descriptor_set(&self) {
+        let image_info = vk::DescriptorImageInfo::builder()
+            .sampler(vk::Sampler::null())
+            .image_view(self.output_image_view)
+            .image_layout(vk::ImageLayout::GENERAL);
         let descriptor_set_write = vk::WriteDescriptorSet::builder()
             .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
             .dst_binding(DESCRIPTOR_SET_IMAGE_BINDING)
             .dst_array_element(0)
             .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(std::slice::from_ref(
-                &vk::DescriptorImageInfo::builder()
-                    .sampler(vk::Sampler::null())
-                    .image_view(self.output_image_view)
-                    .image_layout(vk::ImageLayout::GENERAL),
-            ))
-            .build();
+            .image_info(std::slice::from_ref(&image_info));
         unsafe {
             self.device
-                .update_descriptor_sets(&[descriptor_set_write], &[]);
+                .update_descriptor_sets(std::slice::from_ref(&descriptor_set_write), &[]);
         }
     }
 
@@ -223,7 +243,7 @@ impl VkRTLightningShadows {
             .array_layers(1)
             .samples(vk::SampleCountFlags::TYPE_1)
             .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::STORAGE)
+            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
             .initial_layout(vk::ImageLayout::UNDEFINED);
         let image_allocation = allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly);
 
@@ -280,14 +300,23 @@ impl VkRTLightningShadows {
             vk::RayTracingShaderGroupCreateInfoKHR::builder()
                 .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
                 .general_shader(RGEN_IDX)
+                .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR)
                 .build(),
             vk::RayTracingShaderGroupCreateInfoKHR::builder()
                 .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
                 .general_shader(RMISS_IDX)
+                .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR)
                 .build(),
             vk::RayTracingShaderGroupCreateInfoKHR::builder()
                 .ty(vk::RayTracingShaderGroupTypeKHR::TRIANGLES_HIT_GROUP)
+                .general_shader(vk::SHADER_UNUSED_KHR)
                 .closest_hit_shader(RCHIT_IDX)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR)
                 .build(),
         ];
 
@@ -358,7 +387,10 @@ impl VkRTLightningShadows {
 
         let buffer_ci = vk::BufferCreateInfo::builder()
             .size((GROUP_COUNT * group_handle_size_aligned) as u64)
-            .usage(vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR);
+            .usage(
+                vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
+            );
         let mut sbt_buffer = buffer_allocator.allocate_buffer(&buffer_ci, MemoryLocation::CpuToGpu);
 
         for (group_handle, sbt_group) in std::iter::zip(

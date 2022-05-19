@@ -4,6 +4,7 @@ use std::cell::RefCell;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use ash::vk::CommandBuffer;
 use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
 use nalgebra::*;
@@ -25,6 +26,10 @@ trait VkModelTransferLocation {
 
 struct Storage;
 impl VkModelTransferLocation for Storage {
+    fn to_disk(self: Box<Storage>, vk_model: &mut VkModel) {
+        vk_model.state = Some(self);
+    }
+
     fn to_host(self: Box<Storage>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
         let (buffer_allocation, model_copy_info) = vk_model.transfer_from_disk_to_host();
         vk_model.state = Some(Box::new(Host {
@@ -57,6 +62,10 @@ impl VkModelTransferLocation for Host {
             .get_allocator_mut()
             .destroy_buffer(self.host_buffer_allocation);
         vk_model.state = Some(Box::new(Storage {}));
+    }
+
+    fn to_host(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
+        vk_model.state = Some(self);
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
@@ -220,6 +229,10 @@ impl VkModelTransferLocation for Device {
             self.device_mesh_indices_buffer,
             self.device_primitives_info,
         ));
+    }
+
+    fn to_device(self: Box<Self>, vk_model: &mut VkModel, cb: CommandBuffer) {
+        vk_model.state = Some(self);
     }
 
     fn as_any(&self) -> &dyn Any {
@@ -1038,7 +1051,11 @@ mod tests {
         };
 
         let fence_create_info = vk::FenceCreateInfo::default();
-        let fence = unsafe { bvk.get_device().create_fence(&fence_create_info, None).unwrap() };
+        let fence = unsafe {
+            bvk.get_device()
+                .create_fence(&fence_create_info, None)
+                .unwrap()
+        };
 
         water_bottle.update_model_status(&Vector3::from_element(100.0f32), command_buffer);
         assert!(water_bottle

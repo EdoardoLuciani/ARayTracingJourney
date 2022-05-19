@@ -9,12 +9,13 @@ use winit::event_loop::ControlFlow;
 use winit::platform::run_return::EventLoopExtRunReturn;
 
 fn main() {
-    let window_size = (800u32, 800u32);
+    std::env::set_var("WINIT_UNIX_BACKEND", "x11");
 
+    let window_size = (800u32, 800u32);
     let mut window = WindowManager::new(window_size, None);
     let mut renderer = VulkanTempleRayTracedRenderer::new(window_size, window.get_window_handle());
     renderer.add_model(
-        std::path::Path::new("assets/shaders-spirv"),
+        std::path::Path::new("assets/models/WaterBottle.glb"),
         Matrix3x4::identity(),
     );
     window.event_loop.run_return(|event, _, control_flow| {
