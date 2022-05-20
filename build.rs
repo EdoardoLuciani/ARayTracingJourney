@@ -1,3 +1,4 @@
+use shaderc::{IncludeCallbackResult, IncludeType, ResolvedInclude};
 use std::ffi::OsString;
 use std::fs::File;
 use std::io::{Read, Write};
@@ -64,6 +65,32 @@ fn compile_recursively<T: AsRef<Path>>(
                 .as_mut()
                 .unwrap()
                 .set_target_spirv(shaderc::SpirvVersion::V1_6);
+            compiler_options.as_mut().unwrap().set_include_callback(
+                |requested_source, include_type, requestee_source, include_depth| {
+                    let requested_source_path = match include_type {
+                        IncludeType::Relative => {
+                            let mut requested_source_path = PathBuf::from(requestee_source);
+                            requested_source_path.pop();
+                            requested_source_path.push(Path::new(requested_source));
+                            requested_source_path
+                                .canonicalize()
+                                .map_err(|err| err.to_string())?
+                        }
+                        IncludeType::Standard => PathBuf::from(requested_source),
+                    };
+
+                    let mut file =
+                        File::open(&requested_source_path).map_err(|err| err.to_string())?;
+                    let mut file_contents = String::new();
+                    file.read_to_string(&mut file_contents)
+                        .map_err(|err| err.to_string())?;
+
+                    Ok(ResolvedInclude {
+                        resolved_name: requested_source_path.to_str().unwrap().to_string(),
+                        content: file_contents,
+                    })
+                },
+            );
             let compilation_result = compiler.compile_into_spirv(
                 &shader_contents,
                 shader_kind,

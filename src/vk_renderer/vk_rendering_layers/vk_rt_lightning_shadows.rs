@@ -36,6 +36,7 @@ impl VkRTLightningShadows {
         allocator: Rc<RefCell<VkAllocator>>,
         rendering_resolution: vk::Extent2D,
         shader_spirv_location: &Path,
+        additional_descriptor_set_layouts: &[vk::DescriptorSetLayout],
         output_format: vk::Format,
     ) -> Self {
         let descriptor_set_layout_tlas_image = unsafe {
@@ -85,11 +86,13 @@ impl VkRTLightningShadows {
             output_format,
         );
 
+        let mut descriptor_set_layouts = vec![descriptor_set_layout_tlas_image; 1];
+        descriptor_set_layouts.extend_from_slice(additional_descriptor_set_layouts);
         let pipeline_data = Self::create_ray_tracing_pipeline(
             device.as_ref(),
             ray_tracing_pipeline_fp.as_ref(),
             shader_spirv_location,
-            &[descriptor_set_layout_tlas_image],
+            &descriptor_set_layouts,
         );
 
         let sbt_data = Self::create_shader_binding_table(
@@ -133,7 +136,11 @@ impl VkRTLightningShadows {
         self.output_image.get_image()
     }
 
-    pub fn trace_rays(&self, cb: vk::CommandBuffer) {
+    pub fn trace_rays(
+        &self,
+        cb: vk::CommandBuffer,
+        additional_descriptor_sets: &[vk::DescriptorSet],
+    ) {
         unsafe {
             let image_memory_barrier = vk::ImageMemoryBarrier2::builder()
                 .src_stage_mask(vk::PipelineStageFlags2::NONE)
@@ -160,17 +167,17 @@ impl VkRTLightningShadows {
                 vk::PipelineBindPoint::RAY_TRACING_KHR,
                 self.pipeline,
             );
+
+            let mut descriptor_sets =
+                vec![self.descriptor_set_allocation.get_descriptor_sets()[0]; 1];
+            descriptor_sets.extend_from_slice(additional_descriptor_sets);
+
             self.device.cmd_bind_descriptor_sets(
                 cb,
                 vk::PipelineBindPoint::RAY_TRACING_KHR,
                 self.pipeline_layout,
                 0,
-                &[self
-                    .descriptor_set_allocation
-                    .get_descriptor_sets()
-                    .first()
-                    .copied()
-                    .unwrap()],
+                &descriptor_sets,
                 &[],
             );
             self.ray_tracing_pipeline_fp.cmd_trace_rays(

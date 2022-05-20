@@ -3,6 +3,7 @@ use super::vk_boot::vk_base;
 use super::vk_model::VkModel;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
 use super::vk_tlas_builder::VkTlasBuilder;
+use crate::vk_renderer::vk_camera::VkCamera;
 use ash::{extensions::*, vk};
 use nalgebra::*;
 use std::cell::RefCell;
@@ -105,6 +106,7 @@ pub struct VulkanTempleRayTracedRenderer {
     ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
     allocator: Rc<RefCell<VkAllocator>>,
     models: Vec<VkModel>,
+    camera: VkCamera,
     tlas_builder: VkTlasBuilder,
     rendering_layer: VkRTLightningShadows,
     frames_data: [FrameData; 3],
@@ -175,6 +177,17 @@ impl VulkanTempleRayTracedRenderer {
             allocator.clone(),
         );
 
+        let camera = VkCamera::new(
+            device.clone(),
+            allocator.clone(),
+            Vector3::from_element(0.0f32),
+            Vector3::new(0.0f32, 1.0f32, 0.0f32),
+            window_size.0 as f32 / window_size.1 as f32,
+            nalgebra::RealField::frac_pi_2(),
+            0.1f32,
+            1000f32,
+        );
+
         let mut ray_tracing_pipeline_properties =
             vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
         let mut physical_device_properties = vk::PhysicalDeviceProperties2::builder()
@@ -196,6 +209,7 @@ impl VulkanTempleRayTracedRenderer {
                 height: window_size.1,
             },
             std::path::Path::new("assets//shaders-spirv"),
+            &vec![camera.descriptor_set_layout(); 1],
             vk::Format::R8G8B8A8_UNORM,
         );
 
@@ -220,13 +234,14 @@ impl VulkanTempleRayTracedRenderer {
             ray_tracing_pipeline_fp,
             allocator,
             models: Vec::default(),
+            camera,
             tlas_builder,
             rendering_layer,
             frames_data,
             rendered_frames: 0,
         };
 
-        for i in 0..3 {
+        for i in 0..rtr.frames_data.len() {
             rtr.record_static_command_buffers(i);
         }
 
@@ -430,7 +445,8 @@ impl VulkanTempleRayTracedRenderer {
         }
 
         self.rendering_layer.set_tlas(tlas);
-        self.rendering_layer.trace_rays(cb);
+        self.rendering_layer
+            .trace_rays(cb, &[self.camera.descriptor_set()]);
 
         unsafe {
             self.device.end_command_buffer(cb);
@@ -454,6 +470,7 @@ impl VulkanTempleRayTracedRenderer {
         unsafe {
             self.device.device_wait_idle();
         }
+        self.camera.update_host_buffer();
         self.record_main_command(current_data_idx);
 
         let swapchain_image_idx = unsafe {
@@ -536,5 +553,9 @@ impl VulkanTempleRayTracedRenderer {
         }
 
         self.rendered_frames += 1;
+    }
+
+    pub fn camera_mut(&mut self) -> &mut VkCamera {
+        &mut self.camera
     }
 }

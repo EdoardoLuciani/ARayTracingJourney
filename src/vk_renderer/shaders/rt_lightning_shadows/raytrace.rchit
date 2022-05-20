@@ -1,10 +1,11 @@
 #version 460
+#extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_ray_tracing : require
-#extension GL_EXT_nonuniform_qualifier : enable
 
-layout(location = 0) rayPayloadInEXT vec3 hitValue;
-hitAttributeEXT vec3 attribs;
+#include "ray_payload.glsl"
+
+layout(location = 0) rayPayloadInEXT HitPayload prd;
 
 void main() {
-  hitValue = vec3(0.2, 0.5, 0.5);
+    prd.hit_value = vec3(0.2, 0.5, 0.5);
 }
