@@ -64,7 +64,7 @@ fn compile_recursively<T: AsRef<Path>>(
             compiler_options
                 .as_mut()
                 .unwrap()
-                .set_target_spirv(shaderc::SpirvVersion::V1_6);
+                .set_target_spirv(shaderc::SpirvVersion::V1_5);
             compiler_options.as_mut().unwrap().set_include_callback(
                 |requested_source, include_type, requestee_source, include_depth| {
                     let requested_source_path = match include_type {

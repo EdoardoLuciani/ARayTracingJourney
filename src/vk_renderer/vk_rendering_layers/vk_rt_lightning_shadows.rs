@@ -124,8 +124,29 @@ impl VkRTLightningShadows {
         vk_ray_traced_lightning_shadows
     }
 
-    pub fn resize(rendering_resolution: vk::Extent2D) {
-        todo!()
+    pub fn resize(&mut self, rendering_resolution: vk::Extent2D, output_image_format: vk::Format) {
+        self.rendering_resolution = rendering_resolution;
+
+        unsafe {
+            self.device.destroy_image_view(self.output_image_view, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_image(std::mem::replace(&mut self.output_image, unsafe {
+                    std::mem::zeroed()
+                }));
+        }
+
+        let (image, image_view) = Self::create_output_image(
+            &self.device,
+            &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
+            rendering_resolution,
+            output_image_format,
+        );
+        self.output_image = image;
+        self.output_image_view = image_view;
+        self.update_output_image_descriptor_set();
     }
 
     pub fn set_tlas(&self, tlas: vk::AccelerationStructureKHR) {

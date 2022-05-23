@@ -49,6 +49,7 @@ impl Drop for CommandRecordInfo {
 
 struct FrameData {
     device: Rc<ash::Device>,
+    tlas_builder: VkTlasBuilder,
     semaphores: Vec<vk::Semaphore>,
     after_exec_fence: vk::Fence,
     main_cri: CommandRecordInfo,
@@ -58,6 +59,7 @@ struct FrameData {
 impl FrameData {
     fn new(
         device: Rc<ash::Device>,
+        tlas_builder: VkTlasBuilder,
         queue_family_index: u32,
         semaphores_count: u32,
         presentation_command_buffers_count: u32,
@@ -69,22 +71,31 @@ impl FrameData {
             })
             .collect::<Vec<vk::Semaphore>>();
 
-        let after_exec_fence = unsafe {
-            let fence_ci = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
-            device.create_fence(&fence_ci, None).unwrap()
-        };
-
-        FrameData {
+        let mut fd = FrameData {
             device: device.clone(),
+            tlas_builder,
             semaphores,
-            after_exec_fence,
+            after_exec_fence: vk::Fence::null(),
             main_cri: CommandRecordInfo::new(device.clone(), queue_family_index, 1),
             presentation_cri: CommandRecordInfo::new(
                 device,
                 queue_family_index,
                 presentation_command_buffers_count,
             ),
+        };
+        fd.recreate_fence();
+        fd
+    }
+
+    fn recreate_fence(&mut self) {
+        unsafe {
+            self.device.destroy_fence(self.after_exec_fence, None);
         }
+
+        self.after_exec_fence = unsafe {
+            let fence_ci = vk::FenceCreateInfo::builder().flags(vk::FenceCreateFlags::SIGNALED);
+            self.device.create_fence(&fence_ci, None).unwrap()
+        };
     }
 }
 
@@ -107,14 +118,16 @@ pub struct VulkanTempleRayTracedRenderer {
     allocator: Rc<RefCell<VkAllocator>>,
     models: Vec<VkModel>,
     camera: VkCamera,
-    tlas_builder: VkTlasBuilder,
     rendering_layer: VkRTLightningShadows,
     frames_data: [FrameData; 3],
     rendered_frames: u64,
 }
 
 impl VulkanTempleRayTracedRenderer {
-    pub fn new(window_size: (u32, u32), window_handle: raw_window_handle::RawWindowHandle) -> Self {
+    pub fn new(
+        window_size: vk::Extent2D,
+        window_handle: raw_window_handle::RawWindowHandle,
+    ) -> Self {
         let mut physical_device_ray_tracing_pipeline =
             vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(true);
         let mut physical_device_acceleration_structure =
@@ -145,10 +158,7 @@ impl VulkanTempleRayTracedRenderer {
         );
         bvk.recreate_swapchain(
             vk::PresentModeKHR::FIFO,
-            vk::Extent2D {
-                width: window_size.0,
-                height: window_size.1,
-            },
+            window_size,
             vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::STORAGE,
             vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
@@ -171,18 +181,12 @@ impl VulkanTempleRayTracedRenderer {
             bvk.get_physical_device().clone(),
         )));
 
-        let tlas_builder = VkTlasBuilder::new(
-            device.clone(),
-            acceleration_structure_fp.clone(),
-            allocator.clone(),
-        );
-
         let camera = VkCamera::new(
             device.clone(),
             allocator.clone(),
             Vector3::from_element(0.0f32),
             Vector3::new(0.0f32, 1.0f32, 0.0f32),
-            window_size.0 as f32 / window_size.1 as f32,
+            window_size.width as f32 / window_size.height as f32,
             nalgebra::RealField::frac_pi_2(),
             0.1f32,
             1000f32,
@@ -204,10 +208,7 @@ impl VulkanTempleRayTracedRenderer {
             ray_tracing_pipeline_fp.clone(),
             &ray_tracing_pipeline_properties,
             allocator.clone(),
-            vk::Extent2D {
-                width: window_size.0,
-                height: window_size.1,
-            },
+            window_size,
             std::path::Path::new("assets//shaders-spirv"),
             &vec![camera.descriptor_set_layout(); 1],
             vk::Format::R8G8B8A8_UNORM,
@@ -215,8 +216,14 @@ impl VulkanTempleRayTracedRenderer {
 
         let frames_data: [FrameData; 3] = (0..3)
             .map(|_| {
+                let tlas_builder = VkTlasBuilder::new(
+                    device.clone(),
+                    acceleration_structure_fp.clone(),
+                    allocator.clone(),
+                );
                 FrameData::new(
                     device.clone(),
+                    tlas_builder,
                     bvk.get_queue_family_index(),
                     3,
                     bvk.get_swapchain_image_views().len() as u32,
@@ -227,7 +234,7 @@ impl VulkanTempleRayTracedRenderer {
             .ok()
             .unwrap();
 
-        let rtr = VulkanTempleRayTracedRenderer {
+        let mut rtr = VulkanTempleRayTracedRenderer {
             bvk,
             device,
             acceleration_structure_fp,
@@ -235,7 +242,6 @@ impl VulkanTempleRayTracedRenderer {
             allocator,
             models: Vec::default(),
             camera,
-            tlas_builder,
             rendering_layer,
             frames_data,
             rendered_frames: 0,
@@ -256,6 +262,167 @@ impl VulkanTempleRayTracedRenderer {
             file_path.to_path_buf(),
             model_matrix,
         ));
+    }
+
+    pub fn prepare_first_frame(&mut self) {
+        let frame_data_idx = self.rendered_frames as usize % self.frames_data.len();
+        unsafe {
+            self.device.reset_fences(std::slice::from_ref(
+                &self.frames_data[frame_data_idx].after_exec_fence,
+            ));
+            self.record_main_command(frame_data_idx);
+        }
+    }
+
+    pub fn render_frame(&mut self, window: &winit::window::Window) {
+        let data_idx = self.rendered_frames as usize % self.frames_data.len();
+
+        self.camera.update_host_buffer();
+
+        let swapchain_image_idx = unsafe {
+            let res = self.bvk.get_swapchain_fn().acquire_next_image(
+                self.bvk.get_swapchain().unwrap(),
+                u64::MAX,
+                self.frames_data[data_idx].semaphores[0],
+                vk::Fence::null(),
+            );
+            if res.is_err() || res.unwrap().1 {
+                self.resize(vk::Extent2D {
+                    width: window.inner_size().width,
+                    height: window.inner_size().height,
+                });
+                return;
+            }
+            res.unwrap().0
+        };
+
+        // todo: remove the wait
+        unsafe {
+            self.device.device_wait_idle();
+        }
+
+        let command_submit_info = vk::CommandBufferSubmitInfoKHR::builder()
+            .command_buffer(self.frames_data[data_idx].main_cri.command_buffers[0])
+            .device_mask(0);
+        let signal_semaphore_submit_info = vk::SemaphoreSubmitInfoKHR::builder()
+            .semaphore(self.frames_data[data_idx].semaphores[1])
+            .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+            .device_index(0);
+        let submit_info0 = vk::SubmitInfo2KHR::builder()
+            .wait_semaphore_infos(&[])
+            .command_buffer_infos(std::slice::from_ref(&command_submit_info))
+            .signal_semaphore_infos(std::slice::from_ref(&signal_semaphore_submit_info))
+            .build();
+
+        let wait_semaphore_submit_infos = [
+            vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(self.frames_data[data_idx].semaphores[0])
+                .stage_mask(vk::PipelineStageFlags2KHR::BLIT)
+                .device_index(0)
+                .build(),
+            vk::SemaphoreSubmitInfoKHR::builder()
+                .semaphore(self.frames_data[data_idx].semaphores[1])
+                .stage_mask(vk::PipelineStageFlags2KHR::BLIT)
+                .device_index(0)
+                .build(),
+        ];
+        let command_submit_info = vk::CommandBufferSubmitInfoKHR::builder()
+            .command_buffer(
+                self.frames_data[data_idx].presentation_cri.command_buffers
+                    [swapchain_image_idx as usize],
+            )
+            .device_mask(0);
+        let signal_semaphore_submit_info = vk::SemaphoreSubmitInfoKHR::builder()
+            .semaphore(self.frames_data[data_idx].semaphores[2])
+            .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
+            .device_index(0);
+        let submit_info1 = vk::SubmitInfo2KHR::builder()
+            .wait_semaphore_infos(&wait_semaphore_submit_infos)
+            .command_buffer_infos(std::slice::from_ref(&command_submit_info))
+            .signal_semaphore_infos(std::slice::from_ref(&signal_semaphore_submit_info))
+            .build();
+        unsafe {
+            self.device
+                .queue_submit2(
+                    self.bvk.get_queues()[0],
+                    &[submit_info0, submit_info1],
+                    self.frames_data[data_idx].after_exec_fence,
+                )
+                .expect("Error submitting queue");
+        }
+
+        // start of next frame recording
+        let next_data_idx = (self.rendered_frames as usize + 1) % self.frames_data.len();
+        unsafe {
+            self.device
+                .wait_for_fences(
+                    std::slice::from_ref(&self.frames_data[next_data_idx].after_exec_fence),
+                    false,
+                    u64::MAX,
+                )
+                .unwrap();
+            self.device
+                .reset_fences(std::slice::from_ref(
+                    &self.frames_data[next_data_idx].after_exec_fence,
+                ))
+                .unwrap();
+        }
+        self.record_main_command(next_data_idx);
+
+        let swapchain = self.bvk.get_swapchain().unwrap();
+        let present_info = vk::PresentInfoKHR::builder()
+            .wait_semaphores(std::slice::from_ref(
+                &self.frames_data[data_idx].semaphores[2],
+            ))
+            .swapchains(std::slice::from_ref(&swapchain))
+            .image_indices(std::slice::from_ref(&swapchain_image_idx));
+        unsafe {
+            let res = self
+                .bvk
+                .get_swapchain_fn()
+                .queue_present(self.bvk.get_queues()[0], &present_info);
+            self.rendered_frames += 1;
+            if res.is_err() || res.unwrap() {
+                self.resize(vk::Extent2D {
+                    width: window.inner_size().width,
+                    height: window.inner_size().height,
+                });
+            }
+        }
+    }
+
+    pub fn camera_mut(&mut self) -> &mut VkCamera {
+        &mut self.camera
+    }
+
+    pub fn models_mut(&mut self) -> &mut [VkModel] {
+        &mut self.models
+    }
+
+    fn resize(&mut self, window_resolution: vk::Extent2D) {
+        let rendering_resolution = window_resolution;
+        let presentation_resolution = rendering_resolution;
+
+        unsafe {
+            self.device.device_wait_idle();
+        }
+        self.bvk.recreate_swapchain(
+            vk::PresentModeKHR::FIFO,
+            presentation_resolution,
+            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::STORAGE,
+            vk::SurfaceFormatKHR {
+                format: vk::Format::B8G8R8A8_UNORM,
+                color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
+            },
+        );
+        self.rendering_layer
+            .resize(rendering_resolution, vk::Format::R8G8B8A8_UNORM);
+
+        for i in 0..self.frames_data.len() {
+            self.frames_data[i].recreate_fence();
+            self.record_static_command_buffers(i);
+        }
+        self.prepare_first_frame();
     }
 
     fn record_static_command_buffers(&self, frame_data_idx: usize) {
@@ -382,60 +549,63 @@ impl VulkanTempleRayTracedRenderer {
     }
 
     fn record_main_command(&mut self, frame_data_idx: usize) {
-        let frame_data = &self.frames_data[frame_data_idx];
+        let frame_data = &mut self.frames_data[frame_data_idx];
 
         unsafe {
-            self.device.reset_command_pool(
-                frame_data.main_cri.command_pool,
-                vk::CommandPoolResetFlags::empty(),
-            );
+            self.device
+                .reset_command_pool(
+                    frame_data.main_cri.command_pool,
+                    vk::CommandPoolResetFlags::empty(),
+                )
+                .unwrap();
         }
         let cb = frame_data.main_cri.command_buffers[0];
 
         unsafe {
             let command_buffer_begin_info = vk::CommandBufferBeginInfo::default();
             self.device
-                .begin_command_buffer(cb, &command_buffer_begin_info);
+                .begin_command_buffer(cb, &command_buffer_begin_info)
+                .unwrap();
         }
 
-        let tlas = if frame_data_idx == 0 {
-            for model in self.models.iter_mut() {
+        for model in self.models.iter_mut() {
+            // cleanup model resources every 3rd frame
+            // todo: this is bad cause if command buffer 2 records a change, then command buffer 0 while recording
+            // will cleanup resources still in execution
+            if frame_data_idx == 0 {
                 model.reset_command_buffer_submission_status();
-
-                model.update_model_status(&Vector3::from_element(0.0f32), cb);
-                if let Some(tlas_buffer) = model.get_blas_buffer() {
-                    let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
-                        .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                        .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
-                        .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                        .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
-                        .buffer(tlas_buffer)
-                        .offset(0)
-                        .size(vk::WHOLE_SIZE);
-                    let dependency_info = vk::DependencyInfo::builder()
-                        .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
-                    unsafe {
-                        self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-                    }
+            }
+            model.update_model_status(&Vector3::from_element(0.0f32), cb);
+            if let Some(tlas_buffer) = model.get_blas_buffer() {
+                let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                    .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                    .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
+                    .buffer(tlas_buffer)
+                    .offset(0)
+                    .size(vk::WHOLE_SIZE);
+                let dependency_info = vk::DependencyInfo::builder()
+                    .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
+                unsafe {
+                    self.device.cmd_pipeline_barrier2(cb, &dependency_info);
                 }
             }
+        }
 
-            let blases = self
-                .models
-                .iter()
-                .filter_map(|m| m.get_acceleration_structure_instance())
-                .collect::<Vec<_>>();
-            self.tlas_builder.recreate_tlas(cb, &blases)
-        } else {
-            self.tlas_builder.get_tlas().unwrap()
-        };
+        let blases = self
+            .models
+            .iter()
+            .filter_map(|m| m.get_acceleration_structure_instance())
+            .collect::<Vec<_>>();
+        let tlas = frame_data.tlas_builder.recreate_tlas(cb, &blases);
 
         let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
             .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
             .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
             .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
             .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
-            .buffer(self.tlas_builder.get_tlas_buffer().unwrap())
+            .buffer(frame_data.tlas_builder.get_tlas_buffer().unwrap())
             .offset(0)
             .size(vk::WHOLE_SIZE);
         let dependency_info = vk::DependencyInfo::builder()
@@ -449,113 +619,7 @@ impl VulkanTempleRayTracedRenderer {
             .trace_rays(cb, &[self.camera.descriptor_set()]);
 
         unsafe {
-            self.device.end_command_buffer(cb);
+            self.device.end_command_buffer(cb).unwrap();
         }
-    }
-
-    pub fn render_frame(&mut self, window: &winit::window::Window) {
-        let current_data_idx = self.rendered_frames as usize % self.frames_data.len();
-
-        unsafe {
-            self.device.wait_for_fences(
-                std::slice::from_ref(&self.frames_data[current_data_idx].after_exec_fence),
-                false,
-                u64::MAX,
-            );
-            self.device.reset_fences(std::slice::from_ref(
-                &self.frames_data[current_data_idx].after_exec_fence,
-            ));
-        }
-
-        unsafe {
-            self.device.device_wait_idle();
-        }
-        self.camera.update_host_buffer();
-        self.record_main_command(current_data_idx);
-
-        let swapchain_image_idx = unsafe {
-            let res = self.bvk.get_swapchain_fn().acquire_next_image(
-                self.bvk.get_swapchain().unwrap(),
-                u64::MAX,
-                self.frames_data[current_data_idx].semaphores[0],
-                vk::Fence::null(),
-            );
-            if res.is_err() || res.unwrap().1 {
-                panic!("Fucking hell");
-            }
-            res.unwrap().0
-        };
-
-        let command_submit_info = vk::CommandBufferSubmitInfoKHR::builder()
-            .command_buffer(self.frames_data[current_data_idx].main_cri.command_buffers[0])
-            .device_mask(0);
-        let signal_semaphore_submit_info = vk::SemaphoreSubmitInfoKHR::builder()
-            .semaphore(self.frames_data[current_data_idx].semaphores[1])
-            .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-            .device_index(0);
-        let submit_info0 = vk::SubmitInfo2KHR::builder()
-            .wait_semaphore_infos(&[])
-            .command_buffer_infos(std::slice::from_ref(&command_submit_info))
-            .signal_semaphore_infos(std::slice::from_ref(&signal_semaphore_submit_info))
-            .build();
-
-        let wait_semaphore_submit_infos = [
-            vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.frames_data[current_data_idx].semaphores[0])
-                .stage_mask(vk::PipelineStageFlags2KHR::BLIT)
-                .device_index(0)
-                .build(),
-            vk::SemaphoreSubmitInfoKHR::builder()
-                .semaphore(self.frames_data[current_data_idx].semaphores[1])
-                .stage_mask(vk::PipelineStageFlags2KHR::BLIT)
-                .device_index(0)
-                .build(),
-        ];
-        let command_submit_info = vk::CommandBufferSubmitInfoKHR::builder()
-            .command_buffer(
-                self.frames_data[current_data_idx]
-                    .presentation_cri
-                    .command_buffers[swapchain_image_idx as usize],
-            )
-            .device_mask(0);
-        let signal_semaphore_submit_info = vk::SemaphoreSubmitInfoKHR::builder()
-            .semaphore(self.frames_data[current_data_idx].semaphores[2])
-            .stage_mask(vk::PipelineStageFlags2KHR::ALL_COMMANDS)
-            .device_index(0);
-        let submit_info1 = vk::SubmitInfo2KHR::builder()
-            .wait_semaphore_infos(&wait_semaphore_submit_infos)
-            .command_buffer_infos(std::slice::from_ref(&command_submit_info))
-            .signal_semaphore_infos(std::slice::from_ref(&signal_semaphore_submit_info))
-            .build();
-        unsafe {
-            self.device
-                .queue_submit2(
-                    self.bvk.get_queues()[0],
-                    &[submit_info0, submit_info1],
-                    self.frames_data[current_data_idx].after_exec_fence,
-                )
-                .expect("Error submitting queue");
-        }
-
-        let swapchain = self.bvk.get_swapchain().unwrap();
-        let present_info = vk::PresentInfoKHR::builder()
-            .wait_semaphores(std::slice::from_ref(
-                &self.frames_data[current_data_idx].semaphores[2],
-            ))
-            .swapchains(std::slice::from_ref(&swapchain))
-            .image_indices(std::slice::from_ref(&swapchain_image_idx));
-
-        unsafe {
-            self.bvk
-                .get_swapchain_fn()
-                .queue_present(self.bvk.get_queues()[0], &present_info)
-                .expect("Queue present failed");
-        }
-
-        self.rendered_frames += 1;
-    }
-
-    pub fn camera_mut(&mut self) -> &mut VkCamera {
-        &mut self.camera
     }
 }

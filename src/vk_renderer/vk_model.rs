@@ -1,6 +1,7 @@
 use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
+use std::collections::VecDeque;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -305,7 +306,7 @@ pub struct VkModel {
     uniform: VkModelUniform,
     state: Option<Box<dyn VkModelTransferLocation>>,
     needs_cb_submit: bool,
-    post_cb_submit_cleanups: Vec<Box<dyn VkModelPostSubmissionCleanup>>,
+    post_cb_submit_cleanups: VecDeque<Box<dyn VkModelPostSubmissionCleanup>>,
 }
 
 #[repr(C, packed)]
@@ -330,7 +331,7 @@ impl VkModel {
             uniform: VkModelUniform { model_matrix },
             state: Some(Box::new(Storage {})),
             needs_cb_submit: false,
-            post_cb_submit_cleanups: Vec::new(),
+            post_cb_submit_cleanups: VecDeque::new(),
         };
         if let Some(state) = model.state.take() {
             // passing a null command buffer is acceptable here since we know the initial
@@ -361,7 +362,7 @@ impl VkModel {
     }
 
     pub fn reset_command_buffer_submission_status(&mut self) {
-        while let Some(elem) = self.post_cb_submit_cleanups.pop() {
+        if let Some(elem) = self.post_cb_submit_cleanups.pop_front() {
             elem.cleanup(self);
         }
         self.needs_cb_submit = false;
@@ -376,6 +377,10 @@ impl VkModel {
             .try_into()
             .unwrap();
         vk::TransformMatrixKHR { matrix }
+    }
+
+    pub fn set_model_matrix(&mut self, matrix: Matrix3x4<f32>) {
+        self.uniform.model_matrix = matrix;
     }
 
     pub fn get_acceleration_structure_instance(
@@ -654,7 +659,7 @@ impl VkModel {
 
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanups
-            .push(Box::new(HostToDeviceTransfer {
+            .push_back(Box::new(HostToDeviceTransfer {
                 host_buffer_allocation,
             }));
 
@@ -792,7 +797,7 @@ impl VkModel {
 
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanups
-            .push(Box::new(DeviceToHostTransfer {
+            .push_back(Box::new(DeviceToHostTransfer {
                 device_mesh_indices_allocation,
                 device_images: device_primitives_info
                     .drain(..)
@@ -966,13 +971,17 @@ impl VkModel {
 
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanups
-            .push(Box::new(BlasBuild { scratch_buffer }));
+            .push_back(Box::new(BlasBuild { scratch_buffer }));
         (as_build_info.dst_acceleration_structure, device_blas_buffer)
     }
 }
 
 impl Drop for VkModel {
     fn drop(&mut self) {
+        while let Some(cleanup) = self.post_cb_submit_cleanups.pop_front() {
+            cleanup.cleanup(&self);
+        }
+
         if let Some(state) = self.state.take() {
             state.to_disk(self);
         }

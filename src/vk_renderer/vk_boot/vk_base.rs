@@ -54,7 +54,7 @@ impl VkBase {
                 let validation_features = vk::ValidationFeaturesEXT::builder()
                     .enabled_validation_features(&validation_features_enable)
                     .build();
-                let instance_pnext = std::ptr::addr_of!(validation_features) as *const std::ffi::c_void;
+                let instance_pnext = &validation_features as *const vk::ValidationFeaturesEXT as *const std::ffi::c_void;
             }
             else {
                 let layer_names = [];
