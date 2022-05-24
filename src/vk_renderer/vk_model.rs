@@ -368,14 +368,9 @@ impl VkModel {
         self.needs_cb_submit = false;
     }
 
-    pub fn get_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let matrix: [f32; 12] = self
-            .uniform
-            .model_matrix
-            .data
-            .as_slice()
-            .try_into()
-            .unwrap();
+    pub fn get_transform_model_matrix(&self) -> vk::TransformMatrixKHR {
+        let row_matrix = self.uniform.model_matrix.transpose();
+        let matrix: [f32; 12] = row_matrix.data.as_slice().try_into().unwrap();
         vk::TransformMatrixKHR { matrix }
     }
 
@@ -389,7 +384,7 @@ impl VkModel {
         let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
 
         Some(vk::AccelerationStructureInstanceKHR {
-            transform: self.get_model_matrix(),
+            transform: self.get_transform_model_matrix(),
             instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
             instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
                 0,

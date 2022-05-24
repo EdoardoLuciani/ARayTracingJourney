@@ -14,6 +14,9 @@ fn main() {
 
     let window_size = (800u32, 800u32);
     let mut window = WindowManager::new(window_size, None);
+    window.window.set_cursor_visible(false);
+    window.window.set_cursor_grab(true).unwrap();
+
     let mut renderer = VulkanTempleRayTracedRenderer::new(
         vk::Extent2D {
             width: window_size.0,
@@ -26,6 +29,8 @@ fn main() {
         Matrix3x4::identity(),
     );
     renderer.prepare_first_frame();
+
+    let mut camera_virtual_pos = Vector2::<f32>::new(0.0f32, 0.0f32);
     window.event_loop.run_return(|event, _, control_flow| {
         *control_flow = winit::event_loop::ControlFlow::Poll;
         match event {
@@ -35,14 +40,17 @@ fn main() {
                 }
                 WindowEvent::KeyboardInput { input, .. } => {
                     let mut camera_pos_diff = Vector3::from_element(0.0f32);
-                    const SPEED: f32 = 1.0f32;
+                    const SPEED: f32 = 0.1f32;
                     match input.virtual_keycode.unwrap() {
-                        winit::event::VirtualKeyCode::W => camera_pos_diff[2] = SPEED,
-                        winit::event::VirtualKeyCode::S => camera_pos_diff[2] = -SPEED,
+                        winit::event::VirtualKeyCode::W => camera_pos_diff[2] = -SPEED,
+                        winit::event::VirtualKeyCode::S => camera_pos_diff[2] = SPEED,
                         winit::event::VirtualKeyCode::D => camera_pos_diff[0] = SPEED,
                         winit::event::VirtualKeyCode::A => camera_pos_diff[0] = -SPEED,
                         winit::event::VirtualKeyCode::LControl => camera_pos_diff[1] = SPEED,
                         winit::event::VirtualKeyCode::LShift => camera_pos_diff[1] = -SPEED,
+                        winit::event::VirtualKeyCode::Escape => {
+                            *control_flow = winit::event_loop::ControlFlow::Exit
+                        }
                         _ => {}
                     }
                     let new_pos = renderer.camera_mut().pos()
@@ -60,24 +68,19 @@ fn main() {
                 event: winit::event::DeviceEvent::MouseMotion { delta },
                 ..
             } => {
-                const SENSITIVITY: f32 = 0.01f32;
-                let delta_pos_polar = Vector2::new(delta.0 as f32, delta.1 as f32) * SENSITIVITY;
-                let mut delta_pos_euclidean = Vector3::new(
-                    delta_pos_polar.x.cos() * delta_pos_polar.y.sin(),
-                    delta_pos_polar.x.sin(),
-                    delta_pos_polar.x.cos() * delta_pos_polar.y.cos(),
+                const SENSITIVITY: f32 = 0.001f32;
+                camera_virtual_pos += Vector2::new(-delta.1 as f32, delta.0 as f32) * SENSITIVITY;
+
+                let mut euclidian_dir = Vector3::new(
+                    camera_virtual_pos.x.cos() * camera_virtual_pos.y.sin(),
+                    camera_virtual_pos.x.sin(),
+                    camera_virtual_pos.x.cos() * camera_virtual_pos.y.cos(),
                 );
-                delta_pos_euclidean.normalize_mut();
-                renderer.camera_mut().set_dir(delta_pos_euclidean);
+                euclidian_dir.normalize_mut();
+
+                renderer.camera_mut().set_dir(euclidian_dir);
             }
-            Event::MainEventsCleared => {
-                let m_matrix = Similarity3::from_scaling(0.001f32)
-                    .to_homogeneous()
-                    .fixed_slice::<3, 4>(0, 0)
-                    .into_owned();
-                renderer.models_mut()[0].set_model_matrix(m_matrix);
-                renderer.render_frame(&window.window)
-            }
+            Event::MainEventsCleared => renderer.render_frame(&window.window),
             _ => {}
         }
     });
