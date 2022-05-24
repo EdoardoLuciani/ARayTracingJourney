@@ -2,12 +2,14 @@ use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
 use super::vk_model::VkModel;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
+use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_camera::VkCamera;
 use ash::{extensions::*, vk};
 use nalgebra::*;
 use std::cell::RefCell;
 use std::rc::Rc;
+use itertools::all;
 
 struct CommandRecordInfo {
     device: Rc<ash::Device>,
@@ -118,6 +120,7 @@ pub struct VulkanTempleRayTracedRenderer {
     allocator: Rc<RefCell<VkAllocator>>,
     models: Vec<VkModel>,
     camera: VkCamera,
+    rt_descriptor_set: VkRTDescriptorSet,
     rendering_layer: VkRTLightningShadows,
     frames_data: [FrameData; 3],
     rendered_frames: u64,
@@ -203,6 +206,8 @@ impl VulkanTempleRayTracedRenderer {
             );
         }
 
+        let rt_descriptor_set = VkRTDescriptorSet::new(device.clone(), allocator.clone());
+
         let rendering_layer = VkRTLightningShadows::new(
             device.clone(),
             ray_tracing_pipeline_fp.clone(),
@@ -210,7 +215,7 @@ impl VulkanTempleRayTracedRenderer {
             allocator.clone(),
             window_size,
             std::path::Path::new("assets//shaders-spirv"),
-            &vec![camera.descriptor_set_layout(); 1],
+            &[rt_descriptor_set.descriptor_set_layout(), camera.descriptor_set_layout()],
             vk::Format::R8G8B8A8_UNORM,
         );
 
@@ -242,6 +247,7 @@ impl VulkanTempleRayTracedRenderer {
             allocator,
             models: Vec::default(),
             camera,
+            rt_descriptor_set,
             rendering_layer,
             frames_data,
             rendered_frames: 0,
@@ -614,9 +620,9 @@ impl VulkanTempleRayTracedRenderer {
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
-        self.rendering_layer.set_tlas(tlas);
+        self.rt_descriptor_set.set_tlas(tlas);
         self.rendering_layer
-            .trace_rays(cb, &[self.camera.descriptor_set()]);
+            .trace_rays(cb, &[self.rt_descriptor_set.descriptor_set(), self.camera.descriptor_set()]);
 
         unsafe {
             self.device.end_command_buffer(cb).unwrap();
