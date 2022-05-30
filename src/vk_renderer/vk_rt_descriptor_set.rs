@@ -279,3 +279,37 @@ impl VkRTDescriptorSet {
         }
     }
 }
+
+impl Drop for VkRTDescriptorSet {
+    fn drop(&mut self) {
+        unsafe {
+            self.device
+                .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_descriptor_set_allocator_mut()
+                .free_descriptor_sets(std::mem::replace(
+                    &mut self.descriptor_set_allocation,
+                    DescriptorSetAllocation::null(),
+                ));
+            self.device.destroy_sampler(self.image_sampler, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_host_uniform_sub_allocator_mut()
+                .free(std::mem::replace(
+                    &mut self.model_info_host_allocation,
+                    std::mem::zeroed(),
+                ));
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_device_uniform_sub_allocator_mut()
+                .free(std::mem::replace(
+                    &mut self.model_info_device_allocation,
+                    std::mem::zeroed(),
+                ));
+        }
+    }
+}

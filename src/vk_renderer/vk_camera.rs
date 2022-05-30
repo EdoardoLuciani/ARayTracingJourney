@@ -174,13 +174,14 @@ impl VkCamera {
     pub fn zfar(&self) -> f32 {
         self.zfar
     }
-    
+
     pub fn view_matrix(&self) -> Matrix4<f32> {
         Isometry3::look_at_rh(
             &Point3::from(self.pos),
             &Point3::from(self.pos + self.dir),
             &Vector3::new(0.0f32, -1.0f32, 0.0f32),
-        ).to_homogeneous()
+        )
+        .to_homogeneous()
     }
 
     pub fn descriptor_set_layout(&self) -> vk::DescriptorSetLayout {
@@ -214,7 +215,7 @@ impl Drop for VkCamera {
             .free_descriptor_sets(unsafe {
                 std::mem::replace(
                     &mut self.uniform_descriptor_set_allocation,
-                    std::mem::zeroed(),
+                    DescriptorSetAllocation::null(),
                 )
             });
     }

@@ -39,16 +39,14 @@ impl VkRTLightningShadows {
         output_format: vk::Format,
     ) -> Self {
         let descriptor_set_layout_image = unsafe {
-            let descriptor_set_bindings = [
-                vk::DescriptorSetLayoutBinding::builder()
-                    .binding(DESCRIPTOR_SET_IMAGE_BINDING)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .descriptor_count(1)
-                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
-                    .build(),
-            ];
-            let descriptor_set_layout_ci = vk::DescriptorSetLayoutCreateInfo::builder()
-                .bindings(&descriptor_set_bindings);
+            let descriptor_set_bindings = [vk::DescriptorSetLayoutBinding::builder()
+                .binding(DESCRIPTOR_SET_IMAGE_BINDING)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
+                .build()];
+            let descriptor_set_layout_ci =
+                vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_bindings);
             device
                 .create_descriptor_set_layout(&descriptor_set_layout_ci, None)
                 .unwrap()
@@ -429,8 +427,9 @@ impl Drop for VkRTLightningShadows {
                 .get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
-                    std::mem::zeroed(),
+                    DescriptorSetAllocation::null(),
                 ));
+            self.device.destroy_image_view(self.output_image_view, None);
             self.allocator
                 .as_ref()
                 .borrow_mut()
@@ -439,7 +438,6 @@ impl Drop for VkRTLightningShadows {
                     &mut self.output_image,
                     std::mem::zeroed(),
                 ));
-            self.device.destroy_image_view(self.output_image_view, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_pipeline(self.pipeline, None);

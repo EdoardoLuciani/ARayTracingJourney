@@ -9,6 +9,7 @@ use crate::vk_renderer::vk_rt_descriptor_set::DescriptorSetPrimitiveInfo;
 use ash::{extensions::*, vk};
 use nalgebra::*;
 use std::cell::RefCell;
+use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 struct CommandRecordInfo {
@@ -113,7 +114,6 @@ impl Drop for FrameData {
 }
 
 pub struct VulkanTempleRayTracedRenderer {
-    bvk: vk_base::VkBase,
     device: Rc<ash::Device>,
     acceleration_structure_fp: Rc<khr::AccelerationStructure>,
     ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
@@ -121,9 +121,10 @@ pub struct VulkanTempleRayTracedRenderer {
     models: Vec<VkModel>,
     camera: VkCamera,
     rt_descriptor_set: VkRTDescriptorSet,
+    rendered_frames: u64,
     rendering_layer: VkRTLightningShadows,
     frames_data: [FrameData; 3],
-    rendered_frames: u64,
+    bvk: vk_base::VkBase,
 }
 
 impl VulkanTempleRayTracedRenderer {
@@ -668,6 +669,14 @@ impl VulkanTempleRayTracedRenderer {
 
         unsafe {
             self.device.end_command_buffer(cb).unwrap();
+        }
+    }
+}
+
+impl Drop for VulkanTempleRayTracedRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.device_wait_idle();
         }
     }
 }

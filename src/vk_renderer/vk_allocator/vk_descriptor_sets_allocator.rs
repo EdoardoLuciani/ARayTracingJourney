@@ -15,6 +15,13 @@ pub struct DescriptorSetAllocation {
 }
 
 impl DescriptorSetAllocation {
+    pub unsafe fn null() -> Self {
+        DescriptorSetAllocation {
+            descriptor_sets: vec![],
+            descriptor_pool: Default::default(),
+        }
+    }
+
     pub fn get_descriptor_sets(&self) -> &[vk::DescriptorSet] {
         &self.descriptor_sets
     }
