@@ -62,6 +62,11 @@ fn main() {
                             * camera_pos_diff;
                     renderer.camera_mut().set_pos(new_pos);
                 }
+                WindowEvent::Resized(physical_size) => {
+                    renderer
+                        .camera_mut()
+                        .set_aspect(physical_size.width as f32 / physical_size.height as f32);
+                }
                 _ => {}
             },
             Event::DeviceEvent {

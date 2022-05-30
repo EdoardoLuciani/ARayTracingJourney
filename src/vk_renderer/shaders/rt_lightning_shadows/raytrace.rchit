@@ -31,19 +31,15 @@ struct Vertex {
     vec4 tangent;
 };
 layout(buffer_reference, scalar) buffer Vertices {Vertex v[]; }; // Positions of an object
-layout(buffer_reference, scalar) buffer Indices16 {i16vec3 i[]; };
-layout(buffer_reference, scalar) buffer Indices32 {ivec3 i[]; };
+layout(buffer_reference, scalar) buffer Indices16 {u16vec3 i[]; };
+layout(buffer_reference, scalar) buffer Indices32 {uvec3 i[]; };
 
 void main() {
-    PrimitiveInfo primitive_info = primitive_infos.i[0];
+    PrimitiveInfo primitive_info = primitive_infos.i[gl_InstanceID];
 
     Vertices vertices = Vertices(primitive_info.vertices_address);
 
-    if (gl_PrimitiveID >= 4510) {
-        debugPrintfEXT("Vertex address: %llu, Primitive ID: %d", primitive_info.vertices_address, gl_PrimitiveID);
-    }
-
-    ivec3 indices;
+    uvec3 indices;
     if (primitive_info.single_index_size == 2) {
         Indices16 indices16 = Indices16(primitive_info.indices_address);
         indices = indices16.i[gl_PrimitiveID];
