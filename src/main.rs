@@ -15,7 +15,7 @@ fn main() {
     let window_size = (800u32, 800u32);
     let mut window = WindowManager::new(window_size, None);
     window.window.set_cursor_visible(false);
-    window.window.set_cursor_grab(true).unwrap();
+    //window.window.set_cursor_grab(true).unwrap();
 
     let mut renderer = VulkanTempleRayTracedRenderer::new(
         vk::Extent2D {
@@ -41,14 +41,14 @@ fn main() {
                 WindowEvent::KeyboardInput { input, .. } => {
                     let mut camera_pos_diff = Vector3::from_element(0.0f32);
                     const SPEED: f32 = 0.1f32;
-                    match input.virtual_keycode.unwrap() {
-                        winit::event::VirtualKeyCode::W => camera_pos_diff[2] = -SPEED,
-                        winit::event::VirtualKeyCode::S => camera_pos_diff[2] = SPEED,
-                        winit::event::VirtualKeyCode::D => camera_pos_diff[0] = SPEED,
-                        winit::event::VirtualKeyCode::A => camera_pos_diff[0] = -SPEED,
-                        winit::event::VirtualKeyCode::LControl => camera_pos_diff[1] = SPEED,
-                        winit::event::VirtualKeyCode::LShift => camera_pos_diff[1] = -SPEED,
-                        winit::event::VirtualKeyCode::Escape => {
+                    match input.virtual_keycode {
+                        Some(winit::event::VirtualKeyCode::W) => camera_pos_diff[2] = -SPEED,
+                        Some(winit::event::VirtualKeyCode::S) => camera_pos_diff[2] = SPEED,
+                        Some(winit::event::VirtualKeyCode::D) => camera_pos_diff[0] = SPEED,
+                        Some(winit::event::VirtualKeyCode::A) => camera_pos_diff[0] = -SPEED,
+                        Some(winit::event::VirtualKeyCode::LControl) => camera_pos_diff[1] = SPEED,
+                        Some(winit::event::VirtualKeyCode::LShift) => camera_pos_diff[1] = -SPEED,
+                        Some(winit::event::VirtualKeyCode::Escape) => {
                             *control_flow = winit::event_loop::ControlFlow::Exit
                         }
                         _ => {}
@@ -61,6 +61,11 @@ fn main() {
                             .fixed_slice::<3, 3>(0, 0)
                             * camera_pos_diff;
                     renderer.camera_mut().set_pos(new_pos);
+                }
+                WindowEvent::Resized(physical_size) => {
+                    renderer
+                        .camera_mut()
+                        .set_aspect(physical_size.width as f32 / physical_size.height as f32);
                 }
                 _ => {}
             },

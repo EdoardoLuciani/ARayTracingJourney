@@ -1,13 +1,16 @@
 #version 460
 #extension GL_GOOGLE_include_directive : enable
 #extension GL_EXT_ray_tracing : require
+#extension GL_EXT_shader_explicit_arithmetic_types_int64 : require
+#extension GL_EXT_scalar_block_layout : enable
 
 #include "ray_payload.glsl"
 
-layout(binding = 0, set = 0) uniform accelerationStructureEXT topLevelAS;
-layout(binding = 1, set = 0, rgba32f) uniform image2D image;
+layout(binding = 0, set = 0, rgba32f) uniform image2D image;
 
-layout(binding = 0, set = 1) uniform camera {
+layout(binding = 0, set = 1) uniform accelerationStructureEXT topLevelAS;
+
+layout(binding = 0, set = 2) uniform camera {
     mat4 view;
     mat4 view_inv;
     mat4 proj;

@@ -2,11 +2,14 @@ use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
 use super::vk_model::VkModel;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
+use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_camera::VkCamera;
+use crate::vk_renderer::vk_rt_descriptor_set::DescriptorSetPrimitiveInfo;
 use ash::{extensions::*, vk};
 use nalgebra::*;
 use std::cell::RefCell;
+use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 struct CommandRecordInfo {
@@ -111,16 +114,17 @@ impl Drop for FrameData {
 }
 
 pub struct VulkanTempleRayTracedRenderer {
-    bvk: vk_base::VkBase,
     device: Rc<ash::Device>,
     acceleration_structure_fp: Rc<khr::AccelerationStructure>,
     ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
     allocator: Rc<RefCell<VkAllocator>>,
     models: Vec<VkModel>,
     camera: VkCamera,
+    rt_descriptor_set: VkRTDescriptorSet,
+    rendered_frames: u64,
     rendering_layer: VkRTLightningShadows,
     frames_data: [FrameData; 3],
-    rendered_frames: u64,
+    bvk: vk_base::VkBase,
 }
 
 impl VulkanTempleRayTracedRenderer {
@@ -134,13 +138,25 @@ impl VulkanTempleRayTracedRenderer {
             vk::PhysicalDeviceAccelerationStructureFeaturesKHR::builder()
                 .acceleration_structure(true)
                 .descriptor_binding_acceleration_structure_update_after_bind(true);
-        let mut vulkan_12_features =
-            vk::PhysicalDeviceVulkan12Features::builder().buffer_device_address(true);
+        let vulkan_features = vk::PhysicalDeviceFeatures::builder()
+            .sampler_anisotropy(true)
+            .shader_int64(true)
+            .shader_int16(true)
+            .build();
+        let mut vulkan_11_features =
+            vk::PhysicalDeviceVulkan11Features::builder().storage_buffer16_bit_access(true);
+        let mut vulkan_12_features = vk::PhysicalDeviceVulkan12Features::builder()
+            .buffer_device_address(true)
+            .descriptor_binding_storage_buffer_update_after_bind(true)
+            .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_partially_bound(true);
         let mut vulkan_13_features =
             vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
         let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
+            .features(vulkan_features)
             .push_next(&mut physical_device_acceleration_structure)
             .push_next(&mut physical_device_ray_tracing_pipeline)
+            .push_next(&mut vulkan_11_features)
             .push_next(&mut vulkan_12_features)
             .push_next(&mut vulkan_13_features);
 
@@ -203,6 +219,8 @@ impl VulkanTempleRayTracedRenderer {
             );
         }
 
+        let rt_descriptor_set = VkRTDescriptorSet::new(device.clone(), allocator.clone());
+
         let rendering_layer = VkRTLightningShadows::new(
             device.clone(),
             ray_tracing_pipeline_fp.clone(),
@@ -210,7 +228,10 @@ impl VulkanTempleRayTracedRenderer {
             allocator.clone(),
             window_size,
             std::path::Path::new("assets//shaders-spirv"),
-            &vec![camera.descriptor_set_layout(); 1],
+            &[
+                rt_descriptor_set.descriptor_set_layout(),
+                camera.descriptor_set_layout(),
+            ],
             vk::Format::R8G8B8A8_UNORM,
         );
 
@@ -242,6 +263,7 @@ impl VulkanTempleRayTracedRenderer {
             allocator,
             models: Vec::default(),
             camera,
+            rt_descriptor_set,
             rendering_layer,
             frames_data,
             rendered_frames: 0,
@@ -614,12 +636,47 @@ impl VulkanTempleRayTracedRenderer {
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
-        self.rendering_layer.set_tlas(tlas);
-        self.rendering_layer
-            .trace_rays(cb, &[self.camera.descriptor_set()]);
+        self.rt_descriptor_set.set_tlas(tlas);
+
+        let mut primitives_info = Vec::new();
+        for model in self.models.iter() {
+            if let (Some(e1), Some(e2), Some(e3), Some(e4)) = (
+                model.get_vertices_addresses(),
+                model.get_indices_addresses(),
+                model.get_image_views(),
+                model.get_indices_size(),
+            ) {
+                itertools::izip!(e1, e2, e3, e4).for_each(|(e1, e2, e3, e4)| {
+                    primitives_info.push(DescriptorSetPrimitiveInfo {
+                        vertices_device_address: e1,
+                        indices_device_address: e2,
+                        single_index_size: e4,
+                        image_view: e3,
+                    });
+                });
+            }
+        }
+        self.rt_descriptor_set
+            .set_primitives_info(&primitives_info, cb);
+
+        self.rendering_layer.trace_rays(
+            cb,
+            &[
+                self.rt_descriptor_set.descriptor_set(),
+                self.camera.descriptor_set(),
+            ],
+        );
 
         unsafe {
             self.device.end_command_buffer(cb).unwrap();
+        }
+    }
+}
+
+impl Drop for VulkanTempleRayTracedRenderer {
+    fn drop(&mut self) {
+        unsafe {
+            self.device.device_wait_idle();
         }
     }
 }

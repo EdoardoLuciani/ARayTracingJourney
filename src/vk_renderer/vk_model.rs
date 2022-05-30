@@ -2,6 +2,7 @@ use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
 use std::collections::VecDeque;
+use std::iter::zip;
 use std::path::PathBuf;
 use std::rc::Rc;
 
@@ -139,6 +140,8 @@ struct DevicePrimitiveInfo {
     image_extent: vk::Extent3D,
     image_mip_levels: u32,
     image_layers: u32,
+
+    image_view: vk::ImageView,
 }
 
 impl DevicePrimitiveInfo {
@@ -198,6 +201,11 @@ impl VkModelTransferLocation for Device {
                 allocator
                     .get_allocator_mut()
                     .destroy_image(primitive_info.image);
+                unsafe {
+                    vk_model
+                        .device
+                        .destroy_image_view(primitive_info.image_view, None);
+                };
             });
         vk_model.state = Some(Box::new(Storage {}))
     }
@@ -224,6 +232,16 @@ impl VkModelTransferLocation for Device {
                 }
             }
         }
+
+        self.device_primitives_info
+            .iter()
+            .for_each(|primitive_info| {
+                unsafe {
+                    vk_model
+                        .device
+                        .destroy_image_view(primitive_info.image_view, None);
+                };
+            });
 
         vk_model.state = Some(vk_model.transfer_from_device_to_host(
             cb,
@@ -412,6 +430,62 @@ impl VkModel {
         )
     }
 
+    pub fn get_vertices_addresses(&self) -> Option<Vec<vk::DeviceAddress>> {
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+        Some(
+            device_state
+                .device_primitives_info
+                .iter()
+                .map(|dpi| {
+                    device_state
+                        .device_mesh_indices_buffer
+                        .get_device_address()
+                        .unwrap()
+                        + dpi.mesh_buffer_offset
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn get_indices_addresses(&self) -> Option<Vec<vk::DeviceAddress>> {
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+        Some(
+            device_state
+                .device_primitives_info
+                .iter()
+                .map(|dpi| {
+                    device_state
+                        .device_mesh_indices_buffer
+                        .get_device_address()
+                        .unwrap()
+                        + dpi.indices_buffer_offset
+                })
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn get_indices_size(&self) -> Option<Vec<u32>> {
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+        Some(
+            device_state
+                .device_primitives_info
+                .iter()
+                .map(|dpi| dpi.single_index_size)
+                .collect::<Vec<_>>(),
+        )
+    }
+
+    pub fn get_image_views(&self) -> Option<Vec<vk::ImageView>> {
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+        Some(
+            device_state
+                .device_primitives_info
+                .iter()
+                .map(|dpi| dpi.image_view)
+                .collect::<Vec<_>>(),
+        )
+    }
+
     fn copy_uniform(
         &mut self,
         host_uniform_sub_allocation: &SubAllocationData,
@@ -525,6 +599,29 @@ impl VkModel {
             })
             .collect::<Vec<ImageAllocation>>();
 
+        let device_image_views = zip(
+            device_images_allocations.iter(),
+            host_model_copy_info.get_primitive_data(),
+        )
+        .map(|(image_allocation, model_copy_info)| {
+            let image_view_ci = vk::ImageViewCreateInfo::builder()
+                .image(image_allocation.get_image())
+                .view_type(vk::ImageViewType::TYPE_2D_ARRAY)
+                .format(model_copy_info.image_format)
+                .components(vk::ComponentMapping::default())
+                .subresource_range(
+                    vk::ImageSubresourceRange::builder()
+                        .aspect_mask(vk::ImageAspectFlags::COLOR)
+                        .base_mip_level(0)
+                        .level_count(model_copy_info.image_mip_levels)
+                        .base_array_layer(0)
+                        .layer_count(model_copy_info.image_layers)
+                        .build(),
+                );
+            unsafe { self.device.create_image_view(&image_view_ci, None).unwrap() }
+        })
+        .collect::<Vec<_>>();
+
         // record the buffer copies
         let mut buffer_copies = Vec::<vk::BufferCopy>::new();
 
@@ -633,10 +730,11 @@ impl VkModel {
         let primitives_model_info = itertools::izip!(
             host_model_copy_info.get_primitive_data(),
             buffer_copies.windows(2),
-            device_images_allocations
+            device_images_allocations,
+            device_image_views
         )
         .map(
-            |(host_copy_info, mesh_and_idx_buffer_copy, image)| DevicePrimitiveInfo {
+            |(host_copy_info, mesh_and_idx_buffer_copy, image, image_view)| DevicePrimitiveInfo {
                 mesh_buffer_offset: mesh_and_idx_buffer_copy[0].dst_offset,
                 mesh_size: mesh_and_idx_buffer_copy[0].size,
                 single_mesh_element_size: host_copy_info.single_mesh_element_size,
@@ -648,6 +746,7 @@ impl VkModel {
                 image_extent: host_copy_info.image_extent,
                 image_mip_levels: host_copy_info.image_mip_levels,
                 image_layers: host_copy_info.image_layers,
+                image_view,
             },
         )
         .collect::<Vec<_>>();

@@ -91,6 +91,7 @@ fn compile_recursively<T: AsRef<Path>>(
                     })
                 },
             );
+            compiler_options.as_mut().unwrap().set_generate_debug_info();
             let compilation_result = compiler.compile_into_spirv(
                 &shader_contents,
                 shader_kind,

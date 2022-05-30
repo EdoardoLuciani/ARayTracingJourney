@@ -10,8 +10,7 @@ use std::ops::DerefMut;
 use std::path::Path;
 use std::rc::Rc;
 
-const DESCRIPTOR_SET_TLAS_BINDING: u32 = 0;
-const DESCRIPTOR_SET_IMAGE_BINDING: u32 = 1;
+const DESCRIPTOR_SET_IMAGE_BINDING: u32 = 0;
 
 pub struct VkRTLightningShadows {
     device: Rc<ash::Device>,
@@ -39,32 +38,15 @@ impl VkRTLightningShadows {
         additional_descriptor_set_layouts: &[vk::DescriptorSetLayout],
         output_format: vk::Format,
     ) -> Self {
-        let descriptor_set_layout_tlas_image = unsafe {
-            let descriptor_set_bindings = [
-                vk::DescriptorSetLayoutBinding::builder()
-                    .binding(DESCRIPTOR_SET_TLAS_BINDING)
-                    .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
-                    .descriptor_count(1)
-                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
-                    .build(),
-                vk::DescriptorSetLayoutBinding::builder()
-                    .binding(DESCRIPTOR_SET_IMAGE_BINDING)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .descriptor_count(1)
-                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
-                    .build(),
-            ];
-            let binding_flags = [
-                vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
-                vk::DescriptorBindingFlags::empty(),
-            ];
-            let mut descriptor_set_layout_binding_flags_ci =
-                vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder()
-                    .binding_flags(&binding_flags);
-            let descriptor_set_layout_ci = vk::DescriptorSetLayoutCreateInfo::builder()
-                .push_next(&mut descriptor_set_layout_binding_flags_ci)
-                .flags(vk::DescriptorSetLayoutCreateFlags::UPDATE_AFTER_BIND_POOL)
-                .bindings(&descriptor_set_bindings);
+        let descriptor_set_layout_image = unsafe {
+            let descriptor_set_bindings = [vk::DescriptorSetLayoutBinding::builder()
+                .binding(DESCRIPTOR_SET_IMAGE_BINDING)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .descriptor_count(1)
+                .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
+                .build()];
+            let descriptor_set_layout_ci =
+                vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_bindings);
             device
                 .create_descriptor_set_layout(&descriptor_set_layout_ci, None)
                 .unwrap()
@@ -73,7 +55,7 @@ impl VkRTLightningShadows {
             .as_ref()
             .borrow_mut()
             .get_descriptor_set_allocator_mut()
-            .allocate_descriptor_sets(&[descriptor_set_layout_tlas_image]);
+            .allocate_descriptor_sets(&[descriptor_set_layout_image]);
 
         let image_data = Self::create_output_image(
             device.as_ref(),
@@ -86,7 +68,7 @@ impl VkRTLightningShadows {
             output_format,
         );
 
-        let mut descriptor_set_layouts = vec![descriptor_set_layout_tlas_image; 1];
+        let mut descriptor_set_layouts = vec![descriptor_set_layout_image; 1];
         descriptor_set_layouts.extend_from_slice(additional_descriptor_set_layouts);
         let pipeline_data = Self::create_ray_tracing_pipeline(
             device.as_ref(),
@@ -111,7 +93,7 @@ impl VkRTLightningShadows {
             ray_tracing_pipeline_fp,
             allocator,
             rendering_resolution,
-            descriptor_set_layout: descriptor_set_layout_tlas_image,
+            descriptor_set_layout: descriptor_set_layout_image,
             descriptor_set_allocation,
             output_image: image_data.0,
             output_image_view: image_data.1,
@@ -147,10 +129,6 @@ impl VkRTLightningShadows {
         self.output_image = image;
         self.output_image_view = image_view;
         self.update_output_image_descriptor_set();
-    }
-
-    pub fn set_tlas(&self, tlas: vk::AccelerationStructureKHR) {
-        self.update_tlas_descriptor_set(tlas);
     }
 
     pub fn get_output_image(&self) -> vk::Image {
@@ -215,24 +193,6 @@ impl VkRTLightningShadows {
                 self.rendering_resolution.height,
                 1,
             );
-        }
-    }
-
-    fn update_tlas_descriptor_set(&self, tlas: vk::AccelerationStructureKHR) {
-        let mut write_descriptor_set_acceleration_structure =
-            vk::WriteDescriptorSetAccelerationStructureKHR::builder()
-                .acceleration_structures(std::slice::from_ref(&tlas));
-        let mut descriptor_set_write = vk::WriteDescriptorSet::builder()
-            .push_next(&mut write_descriptor_set_acceleration_structure)
-            .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
-            .dst_binding(DESCRIPTOR_SET_TLAS_BINDING)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::ACCELERATION_STRUCTURE_KHR)
-            .build();
-        descriptor_set_write.descriptor_count = 1;
-        unsafe {
-            self.device
-                .update_descriptor_sets(&[descriptor_set_write], &[]);
         }
     }
 
@@ -467,8 +427,9 @@ impl Drop for VkRTLightningShadows {
                 .get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
-                    std::mem::zeroed(),
+                    DescriptorSetAllocation::null(),
                 ));
+            self.device.destroy_image_view(self.output_image_view, None);
             self.allocator
                 .as_ref()
                 .borrow_mut()
@@ -477,7 +438,6 @@ impl Drop for VkRTLightningShadows {
                     &mut self.output_image,
                     std::mem::zeroed(),
                 ));
-            self.device.destroy_image_view(self.output_image_view, None);
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_pipeline(self.pipeline, None);

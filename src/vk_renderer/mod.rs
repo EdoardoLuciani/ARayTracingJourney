@@ -6,3 +6,4 @@ pub mod vk_camera;
 mod vk_model;
 mod vk_rendering_layers;
 mod vk_tlas_builder;
+mod vk_rt_descriptor_set;
