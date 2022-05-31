@@ -729,7 +729,7 @@ impl VkModel {
 
         let primitives_model_info = itertools::izip!(
             host_model_copy_info.get_primitive_data(),
-            buffer_copies.windows(2),
+            buffer_copies.chunks(2),
             device_images_allocations,
             device_image_views
         )
