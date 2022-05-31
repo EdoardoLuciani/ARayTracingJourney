@@ -25,7 +25,7 @@ fn main() {
         window.get_window_handle(),
     );
     renderer.add_model(
-        std::path::Path::new("assets/models/WaterBottle.glb"),
+        std::path::Path::new("assets/models/Sponzav2.glb"),
         Matrix3x4::identity(),
     );
     renderer.prepare_first_frame();

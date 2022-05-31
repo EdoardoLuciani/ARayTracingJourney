@@ -104,7 +104,7 @@ impl ModelReader for GltfModelReader {
                     ( $($texture_type:expr, $texture:expr), *) => {
                         $(
                             if let Some(v) = $texture {
-                                let texture_idx = v.texture().index();
+                                let texture_idx = v.texture().source().index();
                                 textures.insert($texture_type, images.get(texture_idx).expect(&format!("Cannot open texture idx {}", texture_idx)) as *const gltf::image::Data);
                             }
                         )*
@@ -464,6 +464,9 @@ impl GltfModelReader {
                     }
                     gltf::image::Format::R8G8B8A8 => {
                         (HashMap::from([('r', 0), ('g', 1), ('b', 2), ('a', 3)]), 4)
+                    }
+                    gltf::image::Format::B8G8R8A8 => {
+                        (HashMap::from([('r', 2), ('g', 1), ('b', 0), ('a', 3)]), 4)
                     }
                     _ => {
                         panic!("Unsupported source format during format coercion")
