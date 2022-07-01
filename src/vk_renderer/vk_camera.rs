@@ -127,7 +127,7 @@ impl VkCamera {
     }
 
     pub fn set_dir(&mut self, dir: Vector3<f32>) {
-        self.dir = dir;
+        self.dir = dir.normalize();
         self.needs_update = true;
     }
 

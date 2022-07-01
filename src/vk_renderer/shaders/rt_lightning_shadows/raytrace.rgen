@@ -21,8 +21,8 @@ layout(location = 0) rayPayloadEXT HitPayload prd;
 
 void main() {
     const vec2 pixel_center = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
-    const vec2 inUV = pixel_center/vec2(gl_LaunchSizeEXT.xy);
-    vec2 d = inUV * 2.0 - 1.0;
+    const vec2 in_uv = pixel_center/vec2(gl_LaunchSizeEXT.xy);
+    vec2 d = in_uv * 2.0 - 1.0;
 
     vec4 origin    = view_inv * vec4(0, 0, 0, 1);
     vec4 target    = proj_inv * vec4(d.x, d.y, 1, 1);
@@ -44,6 +44,5 @@ void main() {
               t_max,           // ray max range
               0               // payload (location = 0)
     );
-
     imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(prd.hit_value, 1.0));
 }
