@@ -6,6 +6,8 @@ use std::iter::zip;
 use std::path::PathBuf;
 use std::rc::Rc;
 
+use super::vk_blas_builder::VkBlasBuilder;
+use crate::vk_renderer::vk_blas_builder::Blas;
 use ash::vk::CommandBuffer;
 use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
@@ -71,11 +73,12 @@ impl VkModelTransferLocation for Host {
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
-        let (device_mesh_indices_buffer, primitives_info) = vk_model.transfer_from_host_to_device(
-            cb,
-            self.host_buffer_allocation,
-            self.host_model_copy_info,
-        );
+        let (device_mesh_indices_buffer, mut primitives_info) = vk_model
+            .transfer_from_host_to_device(
+                cb,
+                self.host_buffer_allocation,
+                self.host_model_copy_info,
+            );
 
         let host_uniform_sub_allocation = vk_model
             .allocator
@@ -97,27 +100,20 @@ impl VkModelTransferLocation for Host {
             &device_uniform_sub_allocation,
         );
 
-        let (acceleration_structure, device_acceleration_structure_buffer) =
-            match vk_model.acceleration_structure_fp.is_some() {
-                true => {
-                    let res = vk_model.create_blas(
-                        cb,
-                        &device_mesh_indices_buffer,
-                        &primitives_info,
-                        &device_uniform_sub_allocation,
-                    );
-                    (Some(res.0), Some(res.1))
-                }
-                _ => (None, None),
-            };
+        let blas = match vk_model.vk_blas_builder.is_some() {
+            true => {
+                let res = vk_model.create_blas(cb, &device_mesh_indices_buffer, &primitives_info);
+                Some(res)
+            }
+            _ => None,
+        };
 
         vk_model.state = Some(Box::new(Device {
             device_mesh_indices_buffer,
             host_uniform_sub_allocation,
             device_uniform_sub_allocation,
             device_primitives_info: primitives_info,
-            acceleration_structure,
-            device_acceleration_structure_buffer,
+            blas,
         }));
     }
 
@@ -164,9 +160,8 @@ struct Device {
     device_mesh_indices_buffer: BufferAllocation,
     host_uniform_sub_allocation: SubAllocationData,
     device_uniform_sub_allocation: SubAllocationData,
-    acceleration_structure: Option<vk::AccelerationStructureKHR>,
-    device_acceleration_structure_buffer: Option<BufferAllocation>,
     device_primitives_info: Vec<DevicePrimitiveInfo>,
+    blas: Option<Blas>,
 }
 
 impl VkModelTransferLocation for Device {
@@ -183,18 +178,6 @@ impl VkModelTransferLocation for Device {
             .get_device_uniform_sub_allocator_mut()
             .free(self.device_uniform_sub_allocation);
 
-        if let Some(buffer) = self.device_acceleration_structure_buffer {
-            allocator.get_allocator_mut().destroy_buffer(buffer);
-        }
-        if let Some(acceleration_structure) = self.acceleration_structure {
-            unsafe {
-                vk_model
-                    .acceleration_structure_fp
-                    .as_ref()
-                    .unwrap()
-                    .destroy_acceleration_structure(acceleration_structure, None);
-            }
-        }
         self.device_primitives_info
             .drain(0..)
             .for_each(|primitive_info| {
@@ -219,18 +202,6 @@ impl VkModelTransferLocation for Device {
             allocator
                 .get_device_uniform_sub_allocator_mut()
                 .free(self.device_uniform_sub_allocation);
-            if let Some(buffer) = self.device_acceleration_structure_buffer {
-                allocator.get_allocator_mut().destroy_buffer(buffer);
-            }
-            if let Some(acceleration_structure) = self.acceleration_structure {
-                unsafe {
-                    vk_model
-                        .acceleration_structure_fp
-                        .as_ref()
-                        .unwrap()
-                        .destroy_acceleration_structure(acceleration_structure, None);
-                }
-            }
         }
 
         self.device_primitives_info
@@ -317,7 +288,7 @@ impl VkModelPostSubmissionCleanup for BlasBuild {
 
 pub struct VkModel {
     device: Rc<ash::Device>,
-    acceleration_structure_fp: Option<Rc<khr::AccelerationStructure>>,
+    vk_blas_builder: Option<Rc<VkBlasBuilder>>,
     allocator: Rc<RefCell<VkAllocator>>,
     model_path: PathBuf,
     model_bounding_sphere: Option<Sphere>,
@@ -335,14 +306,14 @@ struct VkModelUniform {
 impl VkModel {
     pub fn new(
         device: Rc<ash::Device>,
-        acceleration_structure_fp: Option<Rc<khr::AccelerationStructure>>,
         allocator: Rc<RefCell<VkAllocator>>,
+        vk_blas_builder: Option<Rc<VkBlasBuilder>>,
         model_path: PathBuf,
         model_matrix: Matrix3x4<f32>,
     ) -> Self {
         let mut model = VkModel {
             device,
-            acceleration_structure_fp,
+            vk_blas_builder,
             allocator,
             model_path,
             model_bounding_sphere: None,
@@ -401,33 +372,30 @@ impl VkModel {
     ) -> Option<vk::AccelerationStructureInstanceKHR> {
         let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
 
-        Some(vk::AccelerationStructureInstanceKHR {
+        let as_instance = vk::AccelerationStructureInstanceKHR {
             transform: self.get_transform_model_matrix(),
             instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
-            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(
-                0,
-                vk::GeometryInstanceFlagsKHR::TRIANGLE_FACING_CULL_DISABLE.as_raw() as u8,
-            ),
+            instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, 0),
             acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
                 device_handle: device_state
-                    .device_acceleration_structure_buffer
-                    .as_ref()?
-                    .get_device_address()
-                    .unwrap(),
+                    .blas
+                    .as_ref()
+                    .expect("No blas creation enabled for geometry")
+                    .get_blas_address(),
             },
-        })
+        };
+        Some(as_instance)
     }
 
     pub fn get_blas_buffer(&self) -> Option<vk::Buffer> {
-        Some(
-            self.state
-                .as_ref()?
-                .as_any()
-                .downcast_ref::<Device>()?
-                .device_acceleration_structure_buffer
-                .as_ref()?
-                .get_buffer(),
-        )
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+        let blas_buffer = device_state
+            .blas
+            .as_ref()
+            .expect("No blas creation enabled for geometry")
+            .get_blas_allocation()
+            .get_buffer();
+        Some(blas_buffer)
     }
 
     pub fn get_vertices_addresses(&self) -> Option<Vec<vk::DeviceAddress>> {
@@ -557,7 +525,7 @@ impl VkModel {
         host_model_copy_info: ModelCopyInfo,
     ) -> (BufferAllocation, Vec<DevicePrimitiveInfo>) {
         let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(host_model_copy_info.compute_mesh_and_indices_size() as u64)
+            .size(host_model_copy_info.compute_aligned_mesh_and_indices_size() as u64)
             .usage(
                 vk::BufferUsageFlags::VERTEX_BUFFER
                     | vk::BufferUsageFlags::INDEX_BUFFER
@@ -628,6 +596,7 @@ impl VkModel {
         let mut destination_offset: u64 = 0;
         for primitive_copy_info in host_model_copy_info.get_primitive_data() {
             // mesh buffer copy
+            destination_offset = align_offset(destination_offset, 12);
             buffer_copies.push(vk::BufferCopy {
                 src_offset: primitive_copy_info.mesh_buffer_offset,
                 dst_offset: destination_offset,
@@ -910,9 +879,8 @@ impl VkModel {
         cb: vk::CommandBuffer,
         device_mesh_allocation: &BufferAllocation,
         device_primitives_info: &[DevicePrimitiveInfo],
-        device_uniform_allocation: &SubAllocationData,
-    ) -> (vk::AccelerationStructureKHR, BufferAllocation) {
-        let as_geom_info = device_primitives_info
+    ) -> Blas {
+        let as_geom_infos = device_primitives_info
             .iter()
             .map(|device_primitive_info| {
                 let vertices_address = vk::DeviceOrHostAddressConstKHR {
@@ -965,108 +933,37 @@ impl VkModel {
             })
             .collect::<Vec<_>>();
 
-        let mut as_build_info = vk::AccelerationStructureBuildGeometryInfoKHR::builder()
-            .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
-            .flags(vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE)
-            .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .geometries(&as_geom_info)
-            .build();
-
-        let as_size_info = unsafe {
-            self.acceleration_structure_fp
-                .as_ref()
-                .unwrap()
-                .get_acceleration_structure_build_sizes(
-                    vk::AccelerationStructureBuildTypeKHR::DEVICE,
-                    &as_build_info,
-                    &as_build_ranges
-                        .iter()
-                        .map(|e| e.primitive_count)
-                        .collect::<Vec<_>>(),
-                )
-        };
-
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(as_size_info.acceleration_structure_size)
-            .usage(
-                vk::BufferUsageFlags::ACCELERATION_STRUCTURE_STORAGE_KHR
-                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
-                    | vk::BufferUsageFlags::STORAGE_BUFFER,
-            );
-        let device_blas_buffer = self
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_allocator_mut()
-            .allocate_buffer(&buffer_create_info, MemoryLocation::GpuOnly);
-
-        as_build_info.dst_acceleration_structure = unsafe {
-            let as_create_info = vk::AccelerationStructureCreateInfoKHR::builder()
-                .buffer(device_blas_buffer.get_buffer())
-                .offset(0)
-                .size(as_size_info.acceleration_structure_size)
-                .ty(as_build_info.ty);
-            self.acceleration_structure_fp
-                .as_ref()
-                .unwrap()
-                .create_acceleration_structure(&as_create_info, None)
-                .unwrap()
-        };
-
-        let buffer_create_info = vk::BufferCreateInfo::builder()
-            .size(as_size_info.build_scratch_size)
-            .usage(
-                vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS | vk::BufferUsageFlags::STORAGE_BUFFER,
-            );
-        let scratch_buffer = self
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_allocator_mut()
-            .allocate_buffer(&buffer_create_info, MemoryLocation::GpuOnly);
-        as_build_info.scratch_data = vk::DeviceOrHostAddressKHR {
-            device_address: scratch_buffer.get_device_address().unwrap(),
-        };
-
         unsafe {
-            let buffer_memory_barriers = [
-                vk::BufferMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .buffer(device_mesh_allocation.get_buffer())
-                    .offset(0)
-                    .size(vk::WHOLE_SIZE)
-                    .build(),
-                vk::BufferMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                    .buffer(device_uniform_allocation.get_buffer())
-                    .offset(0)
-                    .size(vk::WHOLE_SIZE)
-                    .build(),
-            ];
-            let dependancy_info =
-                vk::DependencyInfo::builder().buffer_memory_barriers(&buffer_memory_barriers);
+            let buffer_memory_barrier = vk::BufferMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                .buffer(device_mesh_allocation.get_buffer())
+                .offset(0)
+                .size(vk::WHOLE_SIZE)
+                .build();
+            let dependancy_info = vk::DependencyInfo::builder()
+                .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier));
             self.device.cmd_pipeline_barrier2(cb, &dependancy_info);
-
-            self.acceleration_structure_fp
-                .as_ref()
-                .unwrap()
-                .cmd_build_acceleration_structures(
-                    cb,
-                    std::slice::from_ref(&as_build_info),
-                    &[&as_build_ranges],
-                );
         }
 
+        let mut blas = self
+            .vk_blas_builder
+            .as_ref()
+            .unwrap()
+            .build_blas_from_geometry(
+                cb,
+                &as_geom_infos,
+                &as_build_ranges,
+                vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
+            );
+
         self.needs_cb_submit = true;
-        self.post_cb_submit_cleanups
-            .push_back(Box::new(BlasBuild { scratch_buffer }));
-        (as_build_info.dst_acceleration_structure, device_blas_buffer)
+        self.post_cb_submit_cleanups.push_back(Box::new(BlasBuild {
+            scratch_buffer: blas.release_scratch_buffer(),
+        }));
+        blas
     }
 }
 

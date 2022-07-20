@@ -35,7 +35,7 @@ layout(buffer_reference, scalar) buffer Indices16 {u16vec3 i[]; };
 layout(buffer_reference, scalar) buffer Indices32 {uvec3 i[]; };
 
 void main() {
-    PrimitiveInfo primitive_info = primitive_infos.i[gl_InstanceID];
+    PrimitiveInfo primitive_info = primitive_infos.i[gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT];
 
     Vertices vertices = Vertices(primitive_info.vertices_address);
 

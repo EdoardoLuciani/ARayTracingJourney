@@ -4,6 +4,7 @@ use super::vk_model::VkModel;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
 use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
+use crate::vk_renderer::vk_blas_builder::VkBlasBuilder;
 use crate::vk_renderer::vk_camera::VkCamera;
 use crate::vk_renderer::vk_rt_descriptor_set::DescriptorSetPrimitiveInfo;
 use ash::{extensions::*, vk};
@@ -118,6 +119,7 @@ pub struct VulkanTempleRayTracedRenderer {
     acceleration_structure_fp: Rc<khr::AccelerationStructure>,
     ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
     allocator: Rc<RefCell<VkAllocator>>,
+    tlas_builder: Rc<VkBlasBuilder>,
     models: Vec<VkModel>,
     camera: VkCamera,
     rt_descriptor_set: VkRTDescriptorSet,
@@ -199,11 +201,17 @@ impl VulkanTempleRayTracedRenderer {
             bvk.get_physical_device().clone(),
         )));
 
+        let tlas_builder = Rc::new(VkBlasBuilder::new(
+            device.clone(),
+            acceleration_structure_fp.clone(),
+            allocator.clone(),
+        ));
+
         let camera = VkCamera::new(
             device.clone(),
             allocator.clone(),
             Vector3::from_element(0.0f32),
-            Vector3::new(0.0f32, 1.0f32, 0.0f32),
+            Vector3::new(0.0f32, 0.0f32, 1.0f32),
             window_size.width as f32 / window_size.height as f32,
             nalgebra::RealField::frac_pi_2(),
             0.1f32,
@@ -223,18 +231,27 @@ impl VulkanTempleRayTracedRenderer {
 
         let rt_descriptor_set = VkRTDescriptorSet::new(device.clone(), allocator.clone());
 
+        let init_cri = CommandRecordInfo::new(device.clone(), bvk.get_queue_family_index(), 1);
+        let init_cb = init_cri.command_buffers[0];
+        unsafe {
+            let begin_info = vk::CommandBufferBeginInfo::builder()
+                .flags(vk::CommandBufferUsageFlags::ONE_TIME_SUBMIT);
+            device.begin_command_buffer(init_cb, &begin_info).unwrap();
+        }
+
         let rendering_layer = VkRTLightningShadows::new(
             device.clone(),
             ray_tracing_pipeline_fp.clone(),
             &ray_tracing_pipeline_properties,
             allocator.clone(),
-            window_size,
             std::path::Path::new("assets//shaders-spirv"),
             &[
                 rt_descriptor_set.descriptor_set_layout(),
                 camera.descriptor_set_layout(),
             ],
+            window_size,
             vk::Format::R8G8B8A8_UNORM,
+            init_cb,
         );
 
         let frames_data: [FrameData; 3] = (0..3)
@@ -262,6 +279,7 @@ impl VulkanTempleRayTracedRenderer {
             device,
             acceleration_structure_fp,
             ray_tracing_pipeline_fp,
+            tlas_builder,
             allocator,
             models: Vec::default(),
             camera,
@@ -270,6 +288,11 @@ impl VulkanTempleRayTracedRenderer {
             frames_data,
             rendered_frames: 0,
         };
+
+        unsafe {
+            rtr.device.end_command_buffer(init_cb).unwrap();
+        }
+        rtr.submit_and_wait(init_cb, rtr.bvk.get_queues()[0]);
 
         for i in 0..rtr.frames_data.len() {
             rtr.record_static_command_buffers(i);
@@ -281,8 +304,8 @@ impl VulkanTempleRayTracedRenderer {
     pub fn add_model(&mut self, file_path: &std::path::Path, model_matrix: Matrix3x4<f32>) {
         self.models.push(VkModel::new(
             self.device.clone(),
-            Some(self.acceleration_structure_fp.clone()),
             self.allocator.clone(),
+            Some(self.tlas_builder.clone()),
             file_path.to_path_buf(),
             model_matrix,
         ));
@@ -592,42 +615,45 @@ impl VulkanTempleRayTracedRenderer {
                 .unwrap();
         }
 
+        let mut blas_buffer_memory_barriers = Vec::<vk::BufferMemoryBarrier2>::new();
         for model in self.models.iter_mut() {
-            // cleanup model resources every 3rd frame
-            // todo: this is bad cause if command buffer 2 records a change, then command buffer 0 while recording
-            // will cleanup resources still in execution
-            if frame_data_idx == 0 {
-                model.reset_command_buffer_submission_status();
-            }
+            // todo: put camera_pos here
+            // todo: free model resources
             model.update_model_status(&Vector3::from_element(0.0f32), cb);
-            if let Some(tlas_buffer) = model.get_blas_buffer() {
-                let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                    .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
-                    .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                    .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
-                    .buffer(tlas_buffer)
-                    .offset(0)
-                    .size(vk::WHOLE_SIZE);
-                let dependency_info = vk::DependencyInfo::builder()
-                    .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
-                unsafe {
-                    self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-                }
+            if let Some(blas_buffer) = model.get_blas_buffer() {
+                blas_buffer_memory_barriers.push(
+                    vk::BufferMemoryBarrier2::builder()
+                        .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                        .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                        .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                        .buffer(blas_buffer)
+                        .offset(0)
+                        .size(vk::WHOLE_SIZE)
+                        .build(),
+                );
             }
         }
+        let dependency_info =
+            vk::DependencyInfo::builder().buffer_memory_barriers(&blas_buffer_memory_barriers);
+        unsafe {
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
+        }
 
-        let blases = self
+        let as_instances = self
             .models
             .iter()
             .filter_map(|m| m.get_acceleration_structure_instance())
             .collect::<Vec<_>>();
-        let tlas = frame_data.tlas_builder.recreate_tlas(cb, &blases);
+        frame_data.tlas_builder.recreate_tlas(cb, &as_instances);
+
+        self.rt_descriptor_set
+            .set_tlas(frame_data.tlas_builder.get_tlas().unwrap());
 
         let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
             .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
             .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
-            .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+            .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
             .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
             .buffer(frame_data.tlas_builder.get_tlas_buffer().unwrap())
             .offset(0)
@@ -637,8 +663,6 @@ impl VulkanTempleRayTracedRenderer {
         unsafe {
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
-
-        self.rt_descriptor_set.set_tlas(tlas);
 
         let mut primitives_info = Vec::new();
         for model in self.models.iter() {
@@ -671,6 +695,20 @@ impl VulkanTempleRayTracedRenderer {
 
         unsafe {
             self.device.end_command_buffer(cb).unwrap();
+        }
+    }
+
+    fn submit_and_wait(&self, cb: vk::CommandBuffer, queue: vk::Queue) {
+        let command_buffers = vk::CommandBufferSubmitInfo::builder()
+            .command_buffer(cb)
+            .device_mask(0);
+        let submit_info =
+            vk::SubmitInfo2::builder().command_buffer_infos(std::slice::from_ref(&command_buffers));
+        unsafe {
+            self.device
+                .queue_submit2(queue, std::slice::from_ref(&submit_info), vk::Fence::null())
+                .unwrap();
+            self.device.queue_wait_idle(queue).unwrap();
         }
     }
 }

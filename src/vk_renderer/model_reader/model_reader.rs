@@ -92,9 +92,10 @@ impl ModelCopyInfo {
         size as usize
     }
 
-    pub fn compute_mesh_and_indices_size(&self) -> usize {
+    pub fn compute_aligned_mesh_and_indices_size(&self) -> usize {
         let mut size = 0;
         for primitive_copy_data in &self.primitives_copy_data {
+            size = align_offset(size, 12);
             size += primitive_copy_data.mesh_size;
             size += primitive_copy_data.indices_size;
         }

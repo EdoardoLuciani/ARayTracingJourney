@@ -33,10 +33,11 @@ impl VkRTLightningShadows {
         ray_tracing_pipeline_fp: Rc<khr::RayTracingPipeline>,
         ray_tracing_pipeline_properties: &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
         allocator: Rc<RefCell<VkAllocator>>,
-        rendering_resolution: vk::Extent2D,
         shader_spirv_location: &Path,
         additional_descriptor_set_layouts: &[vk::DescriptorSetLayout],
+        rendering_resolution: vk::Extent2D,
         output_format: vk::Format,
+        init_cb: vk::CommandBuffer,
     ) -> Self {
         let descriptor_set_layout_image = unsafe {
             let descriptor_set_bindings = [vk::DescriptorSetLayoutBinding::builder()
@@ -78,6 +79,8 @@ impl VkRTLightningShadows {
         );
 
         let sbt_data = Self::create_shader_binding_table(
+            device.as_ref(),
+            init_cb,
             ray_tracing_pipeline_fp.as_ref(),
             &ray_tracing_pipeline_properties,
             pipeline_data.1,
@@ -345,6 +348,8 @@ impl VkRTLightningShadows {
     }
 
     fn create_shader_binding_table(
+        device: &ash::Device,
+        cb: vk::CommandBuffer,
         ray_tracing_pipeline_fp: &khr::RayTracingPipeline,
         ray_tracing_pipeline_properties: &vk::PhysicalDeviceRayTracingPipelinePropertiesKHR,
         ray_tracing_pipeline: vk::Pipeline,
@@ -373,46 +378,48 @@ impl VkRTLightningShadows {
                 .unwrap()
         };
 
-        let buffer_ci = vk::BufferCreateInfo::builder()
-            .size((GROUP_COUNT * group_handle_size_aligned) as u64)
-            .usage(
-                vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
-                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS,
-            );
-        let mut sbt_buffer = buffer_allocator.allocate_buffer(&buffer_ci, MemoryLocation::CpuToGpu);
-
+        let mut sbt_data = vec![0u8; GROUP_COUNT * group_handle_size_aligned];
         for (group_handle, sbt_group) in std::iter::zip(
             shader_group_handles.chunks_exact(group_handle_size),
-            sbt_buffer
-                .get_allocation_mut()
-                .mapped_slice_mut()
-                .unwrap()
-                .chunks_exact_mut(group_handle_size_aligned),
+            sbt_data.chunks_exact_mut(group_handle_size_aligned),
         ) {
             sbt_group[..group_handle_size].copy_from_slice(group_handle);
         }
 
+        let buffer_ci = vk::BufferCreateInfo::builder()
+            .size(sbt_data.len() as u64)
+            .usage(
+                vk::BufferUsageFlags::SHADER_BINDING_TABLE_KHR
+                    | vk::BufferUsageFlags::SHADER_DEVICE_ADDRESS
+                    | vk::BufferUsageFlags::TRANSFER_DST,
+            );
+        let sbt_device_buffer =
+            buffer_allocator.allocate_buffer(&buffer_ci, MemoryLocation::GpuOnly);
+
         let sbt_regions = [
             vk::StridedDeviceAddressRegionKHR {
-                device_address: sbt_buffer.get_device_address().unwrap(),
+                device_address: sbt_device_buffer.get_device_address().unwrap(),
                 stride: group_handle_size_aligned as u64,
                 size: (group_handle_size_aligned * RGEN_SHADERS_COUNT) as u64,
             },
             vk::StridedDeviceAddressRegionKHR {
-                device_address: sbt_buffer.get_device_address().unwrap()
+                device_address: sbt_device_buffer.get_device_address().unwrap()
                     + (RGEN_SHADERS_COUNT * group_handle_size_aligned) as u64,
                 stride: group_handle_size_aligned as u64,
                 size: (group_handle_size_aligned * RMISS_SHADERS_COUNT) as u64,
             },
             vk::StridedDeviceAddressRegionKHR {
-                device_address: sbt_buffer.get_device_address().unwrap()
+                device_address: sbt_device_buffer.get_device_address().unwrap()
                     + ((RGEN_SHADERS_COUNT + RMISS_SHADERS_COUNT) * group_handle_size_aligned)
                         as u64,
                 stride: group_handle_size_aligned as u64,
                 size: (group_handle_size_aligned * CHIT_SHADERS_COUNT) as u64,
             },
         ];
-        (sbt_buffer, sbt_regions)
+
+        unsafe { device.cmd_update_buffer(cb, sbt_device_buffer.get_buffer(), 0, &sbt_data) };
+
+        (sbt_device_buffer, sbt_regions)
     }
 }
 

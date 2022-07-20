@@ -191,7 +191,7 @@ impl VkTlasBuilder {
                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
                 .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
                 .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
                 .buffer(
                     self.device_as_instance_struct_buffer
                         .as_ref()
@@ -365,7 +365,7 @@ mod tests {
                 .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
                 .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
                 .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
-                .buffer(water_bottle.get_blas_buffer().unwrap())
+                .buffer(water_bottle.get_blases_buffers().unwrap())
                 .offset(0)
                 .size(vk::WHOLE_SIZE);
             let dependency_info = vk::DependencyInfo::builder()
@@ -376,7 +376,7 @@ mod tests {
 
         tlas_builder.recreate_tlas(
             command_buffer,
-            std::slice::from_ref(&water_bottle.get_acceleration_structure_instance().unwrap()),
+            std::slice::from_ref(&water_bottle.get_acceleration_structure_instances().unwrap()),
         );
 
         unsafe {
