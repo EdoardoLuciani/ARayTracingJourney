@@ -133,7 +133,7 @@ impl Sphere {
             m_transform.column(1).magnitude(),
             m_transform.column(2).magnitude(),
         );
-        let max_scale = vec_scale2.max().sqrt();
+        let max_scale = vec_scale2.max();
         Sphere {
             center: (m_transform * center),
             radius: max_scale * self.radius,
