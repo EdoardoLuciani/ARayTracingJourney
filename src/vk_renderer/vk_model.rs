@@ -363,18 +363,15 @@ impl VkModel {
         vk::TransformMatrixKHR { matrix }
     }
 
-    pub fn set_model_matrix(&mut self, matrix: Matrix3x4<f32>) {
-        self.uniform.model_matrix = matrix;
-    }
-
     pub fn get_acceleration_structure_instance(
         &self,
+        instance_custom_index: u32,
     ) -> Option<vk::AccelerationStructureInstanceKHR> {
         let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
 
         let as_instance = vk::AccelerationStructureInstanceKHR {
             transform: self.get_transform_model_matrix(),
-            instance_custom_index_and_mask: vk::Packed24_8::new(0, 0xff),
+            instance_custom_index_and_mask: vk::Packed24_8::new(instance_custom_index, 0xff),
             instance_shader_binding_table_record_offset_and_flags: vk::Packed24_8::new(0, 0),
             acceleration_structure_reference: vk::AccelerationStructureReferenceKHR {
                 device_handle: device_state
@@ -385,6 +382,14 @@ impl VkModel {
             },
         };
         Some(as_instance)
+    }
+
+    pub fn get_device_primitives_count(&self) -> Option<u32> {
+        if let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()? {
+            Some(device_state.device_primitives_info.len() as u32)
+        } else {
+            None
+        }
     }
 
     pub fn get_blas_buffer(&self) -> Option<vk::Buffer> {
@@ -452,6 +457,10 @@ impl VkModel {
                 .map(|dpi| dpi.image_view)
                 .collect::<Vec<_>>(),
         )
+    }
+
+    pub fn set_model_matrix(&mut self, matrix: Matrix3x4<f32>) {
+        self.uniform.model_matrix = matrix;
     }
 
     fn copy_uniform(

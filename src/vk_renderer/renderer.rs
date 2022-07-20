@@ -640,10 +640,15 @@ impl VulkanTempleRayTracedRenderer {
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
+        let mut instance_custom_index = 0;
         let as_instances = self
             .models
             .iter()
-            .filter_map(|m| m.get_acceleration_structure_instance())
+            .filter_map(|m| {
+                let res = m.get_acceleration_structure_instance(instance_custom_index);
+                instance_custom_index += m.get_device_primitives_count().unwrap_or(0);
+                res
+            })
             .collect::<Vec<_>>();
         frame_data.tlas_builder.recreate_tlas(cb, &as_instances);
 
