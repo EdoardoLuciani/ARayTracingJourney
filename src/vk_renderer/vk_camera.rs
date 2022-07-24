@@ -12,6 +12,7 @@ struct Uniform {
     view_inv: Matrix4<f32>,
     proj: Matrix4<f32>,
     proj_inv: Matrix4<f32>,
+    camera_pos: Vector3<f32>,
 }
 
 pub struct VkCamera {
@@ -51,7 +52,9 @@ impl VkCamera {
                 .binding(0)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR);
+                .stage_flags(
+                    vk::ShaderStageFlags::RAYGEN_KHR | vk::ShaderStageFlags::CLOSEST_HIT_KHR,
+                );
             let descriptor_set_layout_ci = vk::DescriptorSetLayoutCreateInfo::builder()
                 .bindings(std::slice::from_ref(&binding));
             device
@@ -108,6 +111,7 @@ impl VkCamera {
                 view_inv: view.try_inverse().unwrap(),
                 proj: proj.to_homogeneous(),
                 proj_inv: proj.inverse(),
+                camera_pos: self.pos,
             };
 
             let uniform_host_ptr = self
@@ -127,7 +131,7 @@ impl VkCamera {
     }
 
     pub fn set_dir(&mut self, dir: Vector3<f32>) {
-        self.dir = dir;
+        self.dir = dir.normalize();
         self.needs_update = true;
     }
 

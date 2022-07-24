@@ -1,6 +1,8 @@
+mod frame_timer;
 mod vk_renderer;
 mod window_manager;
 
+use crate::frame_timer::FrameTimer;
 use crate::window_manager::WindowManager;
 use ash::vk;
 use nalgebra::*;
@@ -25,11 +27,23 @@ fn main() {
         window.get_window_handle(),
     );
     renderer.add_model(
-        std::path::Path::new("assets/models/WaterBottle.glb"),
-        Matrix3x4::identity(),
+        std::path::Path::new("assets/models/Sponza.glb"),
+        Similarity3::from_scaling(2.0f32)
+            .to_homogeneous()
+            .fixed_slice::<3, 4>(0, 0)
+            .into_owned(),
     );
+
+    renderer
+        .camera_mut()
+        .set_pos(Vector3::new(0.105f32, 0.163f32, -0.03f32));
+    renderer
+        .camera_mut()
+        .set_dir(Vector3::new(-0.984f32, -0.005f32, -0.063f32));
+
     renderer.prepare_first_frame();
 
+    let mut frame_timer = FrameTimer::new();
     let mut camera_virtual_pos = Vector2::<f32>::new(0.0f32, 0.0f32);
     window.event_loop.run_return(|event, _, control_flow| {
         *control_flow = winit::event_loop::ControlFlow::Poll;
@@ -40,7 +54,7 @@ fn main() {
                 }
                 WindowEvent::KeyboardInput { input, .. } => {
                     let mut camera_pos_diff = Vector3::from_element(0.0f32);
-                    const SPEED: f32 = 0.1f32;
+                    const SPEED: f32 = 0.03f32;
                     match input.virtual_keycode {
                         Some(winit::event::VirtualKeyCode::W) => camera_pos_diff[2] = -SPEED,
                         Some(winit::event::VirtualKeyCode::S) => camera_pos_diff[2] = SPEED,
@@ -85,7 +99,10 @@ fn main() {
 
                 renderer.camera_mut().set_dir(euclidian_dir);
             }
-            Event::MainEventsCleared => renderer.render_frame(&window.window),
+            Event::MainEventsCleared => {
+                renderer.render_frame(&window.window);
+                frame_timer.frame_end();
+            }
             _ => {}
         }
     });

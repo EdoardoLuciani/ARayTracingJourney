@@ -50,7 +50,7 @@ impl VkBase {
                 instance_extensions.push("VK_EXT_validation_features");
                 let layer_names = std::slice::from_ref(&"VK_LAYER_KHRONOS_validation");
 
-                let validation_features_enable = [vk::ValidationFeatureEnableEXT::GPU_ASSISTED, vk::ValidationFeatureEnableEXT::BEST_PRACTICES, vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
+                let validation_features_enable = [vk::ValidationFeatureEnableEXT::GPU_ASSISTED, vk::ValidationFeatureEnableEXT::SYNCHRONIZATION_VALIDATION];
                 let validation_features = vk::ValidationFeaturesEXT::builder()
                     .enabled_validation_features(&validation_features_enable)
                     .build();

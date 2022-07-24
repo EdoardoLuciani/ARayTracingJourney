@@ -45,9 +45,9 @@ impl VkRTDescriptorSet {
             .mag_filter(vk::Filter::LINEAR)
             .min_filter(vk::Filter::LINEAR)
             .mipmap_mode(vk::SamplerMipmapMode::LINEAR)
-            .address_mode_u(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-            .address_mode_v(vk::SamplerAddressMode::CLAMP_TO_EDGE)
-            .address_mode_w(vk::SamplerAddressMode::CLAMP_TO_EDGE)
+            .address_mode_u(vk::SamplerAddressMode::REPEAT)
+            .address_mode_v(vk::SamplerAddressMode::REPEAT)
+            .address_mode_w(vk::SamplerAddressMode::REPEAT)
             .mip_lod_bias(0.0f32)
             .anisotropy_enable(true)
             .max_anisotropy(16.0f32)
@@ -226,10 +226,9 @@ impl VkRTDescriptorSet {
                 .regions(std::slice::from_ref(&buffer_region));
             self.device.cmd_copy_buffer2(cb, &copy_buffer_info2);
 
-            // todo: possibly insert a write to read barrier here
             let buffer_memory_barriers = vk::BufferMemoryBarrier2::builder()
                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .src_access_mask(vk::AccessFlags2::NONE)
                 .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
                 .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_READ)
                 .buffer(self.model_info_device_allocation.get_buffer())
