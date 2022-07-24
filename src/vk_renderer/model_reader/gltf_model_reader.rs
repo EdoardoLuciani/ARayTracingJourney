@@ -413,36 +413,51 @@ impl GltfModelReader {
 
     // normalize each primitive mesh individually
     fn normalize_vectors(&mut self) {
-        self.primitives.iter().for_each(|primitive| unsafe {
-            if let Some(vertex_attribute) =
-                primitive.mesh_attributes.get(&MeshAttributeType::VERTICES)
-            {
+        let mut max_magnitude = 1.0f32;
+        self.primitives
+            .iter()
+            .filter_map(|primitive| primitive.mesh_attributes.get(&MeshAttributeType::VERTICES))
+            .for_each(|vertex_attribute| unsafe {
                 let vertex_data_slice = std::slice::from_raw_parts_mut(
-                    self.buffer_data.as_mut_ptr(),
+                    self.buffer_data
+                        .as_mut_ptr()
+                        .add(vertex_attribute.buffer_data_start as usize),
                     vertex_attribute.buffer_data_len as usize,
                 );
-
-                let max_val = vertex_data_slice
-                    .windows(vertex_attribute.element_size as usize)
-                    .step_by(vertex_attribute.element_stride as usize)
-                    .fold(0f32, |max_len: f32, elem| {
-                        let position = *(elem.as_ptr() as *const Vector3<f32>);
-                        let magnitude = position.magnitude();
-                        match magnitude.partial_cmp(&max_len) {
-                            Some(Ordering::Greater) => magnitude,
-                            _ => max_len,
-                        }
-                    });
 
                 vertex_data_slice
                     .windows(vertex_attribute.element_size as usize)
                     .step_by(vertex_attribute.element_stride as usize)
                     .for_each(|elem| {
-                        let mut position = *(elem.as_ptr() as *const Vector3<f32>);
-                        position.div_assign(max_val);
+                        let position = *(elem.as_ptr() as *const Vector3<f32>);
+                        let magnitude = position.magnitude();
+
+                        match magnitude.partial_cmp(&max_magnitude) {
+                            Some(Ordering::Greater) => max_magnitude = magnitude,
+                            _ => {}
+                        }
+                    })
+            });
+
+        self.primitives
+            .iter()
+            .filter_map(|primitive| primitive.mesh_attributes.get(&MeshAttributeType::VERTICES))
+            .for_each(|vertex_attribute| unsafe {
+                let vertex_data_slice = std::slice::from_raw_parts_mut(
+                    self.buffer_data
+                        .as_mut_ptr()
+                        .add(vertex_attribute.buffer_data_start as usize),
+                    vertex_attribute.buffer_data_len as usize,
+                );
+
+                vertex_data_slice
+                    .windows(vertex_attribute.element_size as usize)
+                    .step_by(vertex_attribute.element_stride as usize)
+                    .for_each(|elem| {
+                        let position = (elem.as_ptr() as *mut Vector3<f32>).as_mut().unwrap();
+                        position.div_assign(max_magnitude);
                     });
-            }
-        })
+            });
     }
 
     // Given a format, convert all images to that one

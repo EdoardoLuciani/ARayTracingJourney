@@ -28,7 +28,7 @@ fn main() {
     );
     renderer.add_model(
         std::path::Path::new("assets/models/Sponza.glb"),
-        Similarity3::from_scaling(0.01f32)
+        Similarity3::from_scaling(2.0f32)
             .to_homogeneous()
             .fixed_slice::<3, 4>(0, 0)
             .into_owned(),
@@ -54,7 +54,7 @@ fn main() {
                 }
                 WindowEvent::KeyboardInput { input, .. } => {
                     let mut camera_pos_diff = Vector3::from_element(0.0f32);
-                    const SPEED: f32 = 0.1f32;
+                    const SPEED: f32 = 0.03f32;
                     match input.virtual_keycode {
                         Some(winit::event::VirtualKeyCode::W) => camera_pos_diff[2] = -SPEED,
                         Some(winit::event::VirtualKeyCode::S) => camera_pos_diff[2] = SPEED,

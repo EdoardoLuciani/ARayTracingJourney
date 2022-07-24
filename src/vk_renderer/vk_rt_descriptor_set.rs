@@ -228,7 +228,7 @@ impl VkRTDescriptorSet {
 
             let buffer_memory_barriers = vk::BufferMemoryBarrier2::builder()
                 .src_stage_mask(vk::PipelineStageFlags2::COPY)
-                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .src_access_mask(vk::AccessFlags2::NONE)
                 .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
                 .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_READ)
                 .buffer(self.model_info_device_allocation.get_buffer())

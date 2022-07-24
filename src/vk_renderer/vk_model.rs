@@ -340,7 +340,7 @@ impl VkModel {
 
         let state = self.state.take().unwrap();
         match distance {
-            x if x <= 1f32 => state.to_device(self, cb),
+            x if x <= 10f32 => state.to_device(self, cb),
             x if x <= 20f32 => state.to_host(self, cb),
             _ => state.to_disk(self),
         };
