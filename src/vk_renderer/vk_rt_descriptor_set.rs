@@ -70,13 +70,13 @@ impl VkRTDescriptorSet {
                     .binding(DESCRIPTOR_SET_PRIMITIVE_INFO_BUFFER_BINDING)
                     .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                     .descriptor_count(1)
-                    .stage_flags(vk::ShaderStageFlags::CLOSEST_HIT_KHR)
+                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
                     .build(),
                 vk::DescriptorSetLayoutBinding::builder()
                     .binding(DESCRIPTOR_SET_PRIMITIVE_INFO_IMAGES_BINDING)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .descriptor_count(256)
-                    .stage_flags(vk::ShaderStageFlags::CLOSEST_HIT_KHR)
+                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
                     .immutable_samplers(&immutable_samplers)
                     .build(),
             ];

@@ -4,8 +4,8 @@
 
 #include "ray_payload.glsl"
 
-layout(location = 0) rayPayloadInEXT HitPayload prd;
+layout(location = 1) rayPayloadInEXT ShadowPayload prd;
 
 void main() {
-    prd.primitive_info_idx = -1;
+    prd.is_shadowed = false;
 }
