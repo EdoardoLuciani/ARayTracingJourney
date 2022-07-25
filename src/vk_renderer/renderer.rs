@@ -6,6 +6,7 @@ use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_blas_builder::VkBlasBuilder;
 use crate::vk_renderer::vk_camera::VkCamera;
+use crate::vk_renderer::vk_lights::VkLights;
 use crate::vk_renderer::vk_rt_descriptor_set::DescriptorSetPrimitiveInfo;
 use ash::{extensions::*, vk};
 use nalgebra::*;
@@ -122,6 +123,7 @@ pub struct VulkanTempleRayTracedRenderer {
     tlas_builder: Rc<VkBlasBuilder>,
     models: Vec<VkModel>,
     camera: VkCamera,
+    lights: VkLights,
     rt_descriptor_set: VkRTDescriptorSet,
     rendered_frames: u64,
     rendering_layer: VkRTLightningShadows,
@@ -218,6 +220,8 @@ impl VulkanTempleRayTracedRenderer {
             1000f32,
         );
 
+        let lights = VkLights::new(device.clone(), allocator.clone());
+
         let mut ray_tracing_pipeline_properties =
             vk::PhysicalDeviceRayTracingPipelinePropertiesKHR::default();
         let mut physical_device_properties = vk::PhysicalDeviceProperties2::builder()
@@ -248,6 +252,7 @@ impl VulkanTempleRayTracedRenderer {
             &[
                 rt_descriptor_set.descriptor_set_layout(),
                 camera.descriptor_set_layout(),
+                lights.descriptor_set_layout(),
             ],
             window_size,
             vk::Format::R8G8B8A8_UNORM,
@@ -283,6 +288,7 @@ impl VulkanTempleRayTracedRenderer {
             allocator,
             models: Vec::default(),
             camera,
+            lights,
             rt_descriptor_set,
             rendering_layer,
             frames_data,
@@ -453,12 +459,16 @@ impl VulkanTempleRayTracedRenderer {
             .for_each(|m| m.reset_command_buffer_submission_status());
     }
 
+    pub fn models_mut(&mut self) -> &mut [VkModel] {
+        &mut self.models
+    }
+
     pub fn camera_mut(&mut self) -> &mut VkCamera {
         &mut self.camera
     }
 
-    pub fn models_mut(&mut self) -> &mut [VkModel] {
-        &mut self.models
+    pub fn lights_mut(&mut self) -> &mut VkLights {
+        &mut self.lights
     }
 
     fn resize(&mut self, window_resolution: vk::Extent2D) {
@@ -703,11 +713,14 @@ impl VulkanTempleRayTracedRenderer {
         self.rt_descriptor_set
             .set_primitives_info(&primitives_info, cb);
 
+        self.lights.update_host_and_device_buffer(cb);
+
         self.rendering_layer.trace_rays(
             cb,
             &[
                 self.rt_descriptor_set.descriptor_set(),
                 self.camera.descriptor_set(),
+                self.lights.descriptor_set(),
             ],
         );
 
