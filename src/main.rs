@@ -6,6 +6,7 @@ use crate::frame_timer::FrameTimer;
 use crate::window_manager::WindowManager;
 use ash::vk;
 use nalgebra::*;
+use vk_renderer::lights::*;
 use vk_renderer::renderer::VulkanTempleRayTracedRenderer;
 use winit::event::{Event, WindowEvent};
 use winit::event_loop::ControlFlow;
@@ -35,11 +36,15 @@ fn main() {
     );
 
     renderer
-        .camera_mut()
-        .set_pos(Vector3::new(0.105f32, 0.163f32, -0.03f32));
-    renderer
-        .camera_mut()
-        .set_dir(Vector3::new(-0.984f32, -0.005f32, -0.063f32));
+        .lights_mut()
+        .lights_mut()
+        .get_point_lights_mut()
+        .push(PointLight::new(
+            Vector3::new(0.0f32, 0.66f32, 0.0f32),
+            Vector3::from_element(3.0f32),
+            3.0f32,
+            true,
+        ));
 
     renderer.prepare_first_frame();
 

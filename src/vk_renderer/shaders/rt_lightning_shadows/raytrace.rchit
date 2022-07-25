@@ -12,6 +12,7 @@
 #include "../brdfs.glsl"
 #include "../color_spaces.glsl"
 #include "../tonemaps.glsl"
+#include "light.glsl"
 
 struct PrimitiveInfo {
     uint64_t vertices_address;
@@ -19,7 +20,7 @@ struct PrimitiveInfo {
     uint texture_offset;
     uint single_index_size;
 };
-layout(binding = 1, set = 1, scalar) buffer PrimitiveInfos { PrimitiveInfo i[]; } primitive_infos;
+layout(binding = 1, set = 1, scalar) readonly buffer PrimitiveInfos { PrimitiveInfo primitive_infos[]; };
 layout(binding = 2, set = 1) uniform sampler2DArray textures[];
 
 layout(binding = 0, set = 2) uniform camera {
@@ -29,6 +30,8 @@ layout(binding = 0, set = 2) uniform camera {
     mat4 proj_inv;
     vec3 camera_pos;
 };
+
+layout(binding = 0, set = 3) readonly buffer Lights { Light lights[]; };
 
 struct Vertex {
     vec3 pos;
@@ -70,7 +73,7 @@ Vertex vertex_data_to_vertex(VertexData vertex_data) {
 }
 
 void main() {
-    PrimitiveInfo primitive_info = primitive_infos.i[gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT];
+    PrimitiveInfo primitive_info = primitive_infos[gl_InstanceCustomIndexEXT + gl_GeometryIndexEXT];
 
     uvec3 indices = get_indices(primitive_info, gl_PrimitiveID);
 
@@ -108,11 +111,10 @@ void main() {
 
     float nc_NdotV = dot(N,V);
     float NdotV = clamp(nc_NdotV, 1e-5, 1.0);
-    vec3 rho = vec3(0.0);
 
-    vec3 light_pos = vec3(0.0f, 0.66f, 0.0f);
-    for(int i=0; i<1; i++) {
-        vec3 L = normalize(light_pos - world_pos);
+    vec3 rho = vec3(0.0);
+    for(int i=0; i<lights.length(); i++) {
+        vec3 L = get_L_vec(lights[i], world_pos);
         vec3 H = normalize(V + L);
 
         float nc_NdotL = dot(N, L);
@@ -127,15 +129,12 @@ void main() {
         vec3 rho_s = CookTorrance_specular(NdotL, NdotV, NdotH, corrected_roughness, Ks);
         vec3 rho_d = Kd * Burley_diffuse_local_sss(corrected_roughness, NdotV, nc_NdotV, nc_NdotL, LdotH, 0.4);
 
-        vec3 radiance = vec3(3.0f);
+        vec3 radiance = get_light_radiance(lights[i], world_pos, L);
         rho += (rho_s + rho_d) * radiance * NdotL;
     }
 
-    vec3 color = rho;
-
-    vec3 xyY = rgb_to_xyY(color);
+    vec3 xyY = rgb_to_xyY(rho);
     xyY.z = Tonemap_Uchimura(xyY.z);
-    color = rgb_to_srgb_approx(xyY_to_rgb(xyY));
 
-    prd.hit_value = color;
+    prd.hit_value = rgb_to_srgb_approx(xyY_to_rgb(xyY));
 }
