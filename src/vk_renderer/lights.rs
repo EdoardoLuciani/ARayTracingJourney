@@ -72,12 +72,13 @@ pub struct LightShaderData {
     pos: Vector3<f32>,
     light_type: u32,
     dir: Vector3<f32>,
-    area_light_direction: u32,
+    casts_shadows: u32,
     color: Vector3<f32>,
     falloff_distance: f32,
-    penumbra_umbra_angles: Vector2<f32>,
-    is_shadowed: u32,
-    dummy: f32,
+    area_pos2: Vector3<f32>,
+    penumbra_angle: f32,
+    area_pos3: Vector3<f32>,
+    umbra_angle: f32,
 }
 
 trait LightShaderSerializable {
@@ -95,7 +96,7 @@ pub struct PointLight {
     pos: Vector3<f32>,
     color: Vector3<f32>,
     falloff_distance: f32,
-    is_shadowed: bool,
+    casts_shadows: bool,
 }
 
 impl PointLight {
@@ -103,13 +104,13 @@ impl PointLight {
         pos: Vector3<f32>,
         color: Vector3<f32>,
         falloff_distance: f32,
-        is_shadowed: bool,
+        casts_shadows: bool,
     ) -> Self {
         Self {
             pos,
             color,
             falloff_distance,
-            is_shadowed,
+            casts_shadows,
         }
     }
 
@@ -122,6 +123,9 @@ impl PointLight {
     pub fn falloff_distance(&self) -> f32 {
         self.falloff_distance
     }
+    pub fn casts_shadows(&self) -> bool {
+        self.casts_shadows
+    }
 
     pub fn set_pos(&mut self, pos: Vector3<f32>) {
         self.pos = pos;
@@ -132,20 +136,24 @@ impl PointLight {
     pub fn set_falloff_distance(&mut self, falloff_distance: f32) {
         self.falloff_distance = falloff_distance;
     }
+    pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
+        self.casts_shadows = casts_shadows;
+    }
 }
 
 impl LightShaderSerializable for PointLight {
     fn get_light_shader_data(&self) -> LightShaderData {
         LightShaderData {
             pos: self.pos,
+            light_type: LightType::POINT as u32,
             dir: Vector3::zeros(),
+            casts_shadows: self.casts_shadows as u32,
             color: self.color,
             falloff_distance: self.falloff_distance,
-            penumbra_umbra_angles: Vector2::zeros(),
-            light_type: LightType::POINT as u32,
-            area_light_direction: 0,
-            is_shadowed: self.is_shadowed as u32,
-            dummy: 0.0f32,
+            area_pos2: Vector3::zeros(),
+            penumbra_angle: 0.0f32,
+            area_pos3: Vector3::zeros(),
+            umbra_angle: 0.0f32,
         }
     }
 }
@@ -156,7 +164,7 @@ pub struct SpotLight {
     color: Vector3<f32>,
     falloff_distance: f32,
     penumbra_umbra_angles: Vector2<f32>,
-    is_shadowed: bool,
+    casts_shadows: bool,
 }
 
 impl SpotLight {
@@ -166,7 +174,7 @@ impl SpotLight {
         color: Vector3<f32>,
         falloff_distance: f32,
         penumbra_umbra_angles: Vector2<f32>,
-        is_shadowed: bool,
+        casts_shadows: bool,
     ) -> Self {
         Self {
             pos,
@@ -174,7 +182,7 @@ impl SpotLight {
             color,
             falloff_distance,
             penumbra_umbra_angles,
-            is_shadowed,
+            casts_shadows,
         }
     }
 
@@ -193,6 +201,9 @@ impl SpotLight {
     pub fn penumbra_umbra_angles(&self) -> Vector2<f32> {
         self.penumbra_umbra_angles
     }
+    pub fn casts_shadows(&self) -> bool {
+        self.casts_shadows
+    }
 
     pub fn set_pos(&mut self, pos: Vector3<f32>) {
         self.pos = pos;
@@ -209,20 +220,24 @@ impl SpotLight {
     pub fn set_penumbra_umbra_angles(&mut self, penumbra_umbra_angles: Vector2<f32>) {
         self.penumbra_umbra_angles = penumbra_umbra_angles;
     }
+    pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
+        self.casts_shadows = casts_shadows;
+    }
 }
 
 impl LightShaderSerializable for SpotLight {
     fn get_light_shader_data(&self) -> LightShaderData {
         LightShaderData {
             pos: self.pos,
+            light_type: LightType::SPOT as u32,
             dir: self.dir,
+            casts_shadows: self.casts_shadows as u32,
             color: self.color,
             falloff_distance: self.falloff_distance,
-            penumbra_umbra_angles: self.penumbra_umbra_angles,
-            light_type: LightType::SPOT as u32,
-            area_light_direction: 0,
-            is_shadowed: self.is_shadowed as u32,
-            dummy: 0.0f32,
+            area_pos2: Vector3::zeros(),
+            penumbra_angle: self.penumbra_umbra_angles.x,
+            area_pos3: Vector3::zeros(),
+            umbra_angle: self.penumbra_umbra_angles.y,
         }
     }
 }
@@ -230,15 +245,15 @@ impl LightShaderSerializable for SpotLight {
 pub struct DirectionalLight {
     dir: Vector3<f32>,
     color: Vector3<f32>,
-    is_shadowed: bool,
+    casts_shadows: bool,
 }
 
 impl DirectionalLight {
-    pub fn new(dir: Vector3<f32>, color: Vector3<f32>, is_shadowed: bool) -> Self {
+    pub fn new(dir: Vector3<f32>, color: Vector3<f32>, casts_shadows: bool) -> Self {
         Self {
             dir,
             color,
-            is_shadowed,
+            casts_shadows,
         }
     }
 
@@ -248,6 +263,9 @@ impl DirectionalLight {
     pub fn color(&self) -> Vector3<f32> {
         self.color
     }
+    pub fn casts_shadows(&self) -> bool {
+        self.casts_shadows
+    }
 
     pub fn set_dir(&mut self, dir: Vector3<f32>) {
         self.dir = dir;
@@ -255,20 +273,24 @@ impl DirectionalLight {
     pub fn set_color(&mut self, color: Vector3<f32>) {
         self.color = color;
     }
+    pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
+        self.casts_shadows = casts_shadows;
+    }
 }
 
 impl LightShaderSerializable for DirectionalLight {
     fn get_light_shader_data(&self) -> LightShaderData {
         LightShaderData {
             pos: Vector3::zeros(),
+            light_type: LightType::DIRECTIONAL as u32,
             dir: self.dir,
+            casts_shadows: self.casts_shadows as u32,
             color: self.color,
             falloff_distance: 0.0f32,
-            penumbra_umbra_angles: Vector2::zeros(),
-            light_type: LightType::DIRECTIONAL as u32,
-            area_light_direction: 0,
-            is_shadowed: self.is_shadowed as u32,
-            dummy: 0.0f32,
+            area_pos2: Vector3::zeros(),
+            penumbra_angle: 0.0f32,
+            area_pos3: Vector3::zeros(),
+            umbra_angle: 0.0f32,
         }
     }
 }
@@ -276,31 +298,34 @@ impl LightShaderSerializable for DirectionalLight {
 pub struct AreaLight {
     pos: Vector3<f32>,
     pos2: Vector3<f32>,
-    direction: bool,
+    pos3: Vector3<f32>,
+    invert_normal: bool,
     color: Vector3<f32>,
     falloff_distance: f32,
     penumbra_umbra_angles: Vector2<f32>,
-    is_shadowed: bool,
+    casts_shadows: bool,
 }
 
 impl AreaLight {
     pub fn new(
         pos: Vector3<f32>,
         pos2: Vector3<f32>,
-        direction: bool,
+        pos3: Vector3<f32>,
+        invert_normal: bool,
         color: Vector3<f32>,
         falloff_distance: f32,
         penumbra_umbra_angles: Vector2<f32>,
-        is_shadowed: bool,
+        casts_shadows: bool,
     ) -> Self {
         Self {
             pos,
             pos2,
-            direction,
+            pos3,
+            invert_normal,
             color,
             falloff_distance,
             penumbra_umbra_angles,
-            is_shadowed,
+            casts_shadows,
         }
     }
 
@@ -310,8 +335,11 @@ impl AreaLight {
     pub fn pos2(&self) -> Vector3<f32> {
         self.pos2
     }
-    pub fn direction(&self) -> bool {
-        self.direction
+    pub fn pos3(&self) -> Vector3<f32> {
+        self.pos2
+    }
+    pub fn invert_normal(&self) -> bool {
+        self.invert_normal
     }
     pub fn color(&self) -> Vector3<f32> {
         self.color
@@ -322,6 +350,9 @@ impl AreaLight {
     pub fn penumbra_umbra_angles(&self) -> Vector2<f32> {
         self.penumbra_umbra_angles
     }
+    pub fn casts_shadows(&self) -> bool {
+        self.casts_shadows
+    }
 
     pub fn set_pos(&mut self, pos: Vector3<f32>) {
         self.pos = pos;
@@ -329,8 +360,11 @@ impl AreaLight {
     pub fn set_pos2(&mut self, pos2: Vector3<f32>) {
         self.pos2 = pos2;
     }
-    pub fn set_direction(&mut self, direction: bool) {
-        self.direction = direction;
+    pub fn set_pos3(&mut self, pos3: Vector3<f32>) {
+        self.pos3 = pos3;
+    }
+    pub fn set_invert_normal(&mut self, invert_normal: bool) {
+        self.invert_normal = invert_normal;
     }
     pub fn set_color(&mut self, color: Vector3<f32>) {
         self.color = color;
@@ -341,20 +375,29 @@ impl AreaLight {
     pub fn set_penumbra_umbra_angles(&mut self, penumbra_umbra_angles: Vector2<f32>) {
         self.penumbra_umbra_angles = penumbra_umbra_angles;
     }
+    pub fn set_casts_shadows(&mut self, casts_shadows: bool) {
+        self.casts_shadows = casts_shadows;
+    }
 }
 
 impl LightShaderSerializable for AreaLight {
     fn get_light_shader_data(&self) -> LightShaderData {
+        let mut plane_normal = (self.pos - self.pos2).cross(&(self.pos3 - self.pos2));
+        if self.invert_normal {
+            plane_normal = -plane_normal
+        }
+        plane_normal.normalize_mut();
         LightShaderData {
             pos: self.pos,
-            dir: self.pos2,
+            light_type: LightType::AREA as u32,
+            dir: plane_normal,
+            casts_shadows: self.casts_shadows as u32,
             color: self.color,
             falloff_distance: self.falloff_distance,
-            penumbra_umbra_angles: self.penumbra_umbra_angles,
-            light_type: LightType::AREA as u32,
-            area_light_direction: self.direction as u32,
-            is_shadowed: self.is_shadowed as u32,
-            dummy: 0.0f32,
+            area_pos2: self.pos2,
+            penumbra_angle: self.penumbra_umbra_angles.x,
+            area_pos3: self.pos3,
+            umbra_angle: self.penumbra_umbra_angles.y,
         }
     }
 }

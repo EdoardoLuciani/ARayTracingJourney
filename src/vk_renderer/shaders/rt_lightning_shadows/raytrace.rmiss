@@ -7,5 +7,5 @@
 layout(location = 0) rayPayloadInEXT HitPayload prd;
 
 void main() {
-    prd.hit_value = vec3(0.0, 0.1, 0.3);
+    prd.primitive_info_idx = -1;
 }

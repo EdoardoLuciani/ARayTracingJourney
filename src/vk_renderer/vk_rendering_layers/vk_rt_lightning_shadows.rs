@@ -276,6 +276,12 @@ impl VkRTLightningShadows {
                 device,
             ),
             vk_create_shader_stage(
+                [path.to_str().unwrap(), "shadow.rmiss.spirv"]
+                    .iter()
+                    .collect::<std::path::PathBuf>(),
+                device,
+            ),
+            vk_create_shader_stage(
                 [path.to_str().unwrap(), "raytrace.rchit.spirv"]
                     .iter()
                     .collect::<std::path::PathBuf>(),
@@ -285,7 +291,8 @@ impl VkRTLightningShadows {
 
         const RGEN_IDX: u32 = 0;
         const RMISS_IDX: u32 = 1;
-        const RCHIT_IDX: u32 = 2;
+        const RMISS2_IDX: u32 = 2;
+        const RCHIT_IDX: u32 = 3;
 
         let rt_shader_groups_ci = [
             vk::RayTracingShaderGroupCreateInfoKHR::builder()
@@ -298,6 +305,13 @@ impl VkRTLightningShadows {
             vk::RayTracingShaderGroupCreateInfoKHR::builder()
                 .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
                 .general_shader(RMISS_IDX)
+                .closest_hit_shader(vk::SHADER_UNUSED_KHR)
+                .any_hit_shader(vk::SHADER_UNUSED_KHR)
+                .intersection_shader(vk::SHADER_UNUSED_KHR)
+                .build(),
+            vk::RayTracingShaderGroupCreateInfoKHR::builder()
+                .ty(vk::RayTracingShaderGroupTypeKHR::GENERAL)
+                .general_shader(RMISS2_IDX)
                 .closest_hit_shader(vk::SHADER_UNUSED_KHR)
                 .any_hit_shader(vk::SHADER_UNUSED_KHR)
                 .intersection_shader(vk::SHADER_UNUSED_KHR)
@@ -356,7 +370,7 @@ impl VkRTLightningShadows {
         buffer_allocator: &mut VkMemoryResourceAllocator,
     ) -> (BufferAllocation, [vk::StridedDeviceAddressRegionKHR; 3]) {
         const RGEN_SHADERS_COUNT: usize = 1;
-        const RMISS_SHADERS_COUNT: usize = 1;
+        const RMISS_SHADERS_COUNT: usize = 2;
         const CHIT_SHADERS_COUNT: usize = 1;
 
         const GROUP_COUNT: usize = RGEN_SHADERS_COUNT + RMISS_SHADERS_COUNT + CHIT_SHADERS_COUNT;

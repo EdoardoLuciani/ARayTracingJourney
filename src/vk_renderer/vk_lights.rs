@@ -38,7 +38,7 @@ impl VkLights {
                 .binding(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_BUFFER)
                 .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::CLOSEST_HIT_KHR);
+                .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR);
             let descriptor_set_layout_ci = vk::DescriptorSetLayoutCreateInfo::builder()
                 .bindings(std::slice::from_ref(&descriptor_set_layout_binding));
             device
