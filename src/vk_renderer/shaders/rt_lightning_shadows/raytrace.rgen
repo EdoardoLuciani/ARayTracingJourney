@@ -100,7 +100,7 @@ void main() {
               0               // payload (location = 0)
     );
 
-    vec3 color = vec3(0.0, 0.1, 0.3);
+    vec3 color = vec3(0.0, 0.0, 0.0);
     if (hit_payload.primitive_info_idx >= 0) {
         PrimitiveInfo primitive_info = primitive_infos[hit_payload.primitive_info_idx];
 
@@ -143,7 +143,8 @@ void main() {
 
         vec3 rho = vec3(0.0);
         for(int i=0; i<lights.length(); i++) {
-            vec3 L = get_L_vec(lights[i], world_pos);
+            vec3 nn_L = get_unnormalized_L_vec(lights[i], world_pos);
+            vec3 L = normalize(nn_L);
             vec3 H = normalize(V + L);
 
             float nc_NdotL = dot(N, L);
@@ -158,8 +159,29 @@ void main() {
             vec3 rho_s = CookTorrance_specular(NdotL, NdotV, NdotH, corrected_roughness, Ks);
             vec3 rho_d = Kd * Burley_diffuse_local_sss(corrected_roughness, NdotV, nc_NdotV, nc_NdotL, LdotH, 0.4);
 
+            float shadow_attenuation = 1.0f;
+            if (casts_shadows(lights[i]) && nc_NdotL > 0) {
+                shadow_payload.is_shadowed = true;
+                traceRayEXT(topLevelAS,
+                    gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT,
+                    0xFF,
+                    0,
+                    0,
+                    1,
+                    world_pos,
+                    0.01,
+                    L,
+                    length(nn_L),
+                    1
+                );
+                if (shadow_payload.is_shadowed) {
+                    shadow_attenuation = 0.05;
+                }
+            }
+
             vec3 radiance = get_light_radiance(lights[i], world_pos, L);
-            rho += (rho_s + rho_d) * radiance * NdotL;
+            rho += (rho_s + rho_d) * radiance * shadow_attenuation * NdotL;
+            //rho = nn_L;
         }
         color = rho;
     }

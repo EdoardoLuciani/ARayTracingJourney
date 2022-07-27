@@ -38,11 +38,28 @@ fn main() {
     renderer
         .lights_mut()
         .lights_mut()
-        .get_point_lights_mut()
-        .push(PointLight::new(
-            Vector3::new(0.0f32, 0.66f32, 0.0f32),
-            Vector3::from_element(3.0f32),
+        .get_spot_lights_mut()
+        .push(SpotLight::new(
+            Vector3::new(0.0f32, 1.5f32, 0.0f32),
+            Vector3::new(0.0f32, -1.0f32, 0.0f32).normalize(),
+            Vector3::new(1.36f32, 0.16f32, 2.22f32) * 10.0f32,
             3.0f32,
+            Vector2::new(30f32.to_radians(), 45f32.to_radians()),
+            true,
+        ));
+
+    renderer
+        .lights_mut()
+        .lights_mut()
+        .get_area_lights_mut()
+        .push(AreaLight::new(
+            Vector3::new(-0.70f32, 0.77f32, 0.08f32),
+            Vector3::new(-0.70f32, 0.77f32, -0.16f32),
+            Vector3::new(-0.70f32, 0.90f32, -0.16f32),
+            false,
+            Vector3::new(1.96f32, 0.06f32, 0.41f32) * 3.0f32,
+            3.0f32,
+            Vector2::from_element(90.0f32.to_radians()),
             true,
         ));
 
@@ -50,6 +67,7 @@ fn main() {
 
     let mut frame_timer = FrameTimer::new();
     let mut camera_virtual_pos = Vector2::<f32>::new(0.0f32, 0.0f32);
+    let mut clock = std::time::Instant::now();
     window.event_loop.run_return(|event, _, control_flow| {
         *control_flow = winit::event_loop::ControlFlow::Poll;
         match event {
@@ -59,7 +77,7 @@ fn main() {
                 }
                 WindowEvent::KeyboardInput { input, .. } => {
                     let mut camera_pos_diff = Vector3::from_element(0.0f32);
-                    const SPEED: f32 = 0.03f32;
+                    const SPEED: f32 = 0.002f32;
                     match input.virtual_keycode {
                         Some(winit::event::VirtualKeyCode::W) => camera_pos_diff[2] = -SPEED,
                         Some(winit::event::VirtualKeyCode::S) => camera_pos_diff[2] = SPEED,
@@ -78,7 +96,8 @@ fn main() {
                             .view_matrix()
                             .transpose()
                             .fixed_slice::<3, 3>(0, 0)
-                            * camera_pos_diff;
+                            * camera_pos_diff
+                            * clock.elapsed().as_millis() as f32;
                     renderer.camera_mut().set_pos(new_pos);
                 }
                 WindowEvent::Resized(physical_size) => {
@@ -92,7 +111,7 @@ fn main() {
                 event: winit::event::DeviceEvent::MouseMotion { delta },
                 ..
             } => {
-                const SENSITIVITY: f32 = 0.001f32;
+                const SENSITIVITY: f32 = 0.002f32;
                 camera_virtual_pos += Vector2::new(-delta.1 as f32, delta.0 as f32) * SENSITIVITY;
 
                 let mut euclidian_dir = Vector3::new(
@@ -105,6 +124,9 @@ fn main() {
                 renderer.camera_mut().set_dir(euclidian_dir);
             }
             Event::MainEventsCleared => {
+                dbg!(renderer.camera_mut().pos());
+                dbg!(renderer.camera_mut().dir());
+                clock = std::time::Instant::now();
                 renderer.render_frame(&window.window);
                 frame_timer.frame_end();
             }
