@@ -124,8 +124,6 @@ fn main() {
                 renderer.camera_mut().set_dir(euclidian_dir);
             }
             Event::MainEventsCleared => {
-                dbg!(renderer.camera_mut().pos());
-                dbg!(renderer.camera_mut().dir());
                 clock = std::time::Instant::now();
                 renderer.render_frame(&window.window);
                 frame_timer.frame_end();
