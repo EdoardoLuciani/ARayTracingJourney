@@ -15,6 +15,7 @@
 
 layout(binding = 0, set = 0, rgba32f) uniform image2D image;
 layout(binding = 1, set = 0, r16f) uniform image2D depth_image;
+layout(binding = 2, set = 0, r11f_g11f_b10f) uniform image2D normal_image;
 
 layout(binding = 0, set = 1) uniform accelerationStructureEXT topLevelAS;
 
@@ -101,8 +102,9 @@ void main() {
               0               // payload (location = 0)
     );
 
-    float depth = 0.0;
-    vec3 color = vec3(0.0, 0.0, 0.0);
+    float out_depth = 0.0;
+    vec3 out_color = vec3(0.0);
+    vec3 out_normal = vec3(0.0);
     if (hit_payload.primitive_info_idx >= 0) {
         PrimitiveInfo primitive_info = primitive_infos[hit_payload.primitive_info_idx];
 
@@ -184,16 +186,19 @@ void main() {
             vec3 radiance = get_light_radiance(lights[i], world_pos, L);
             rho += (rho_s + rho_d) * radiance * shadow_attenuation * NdotL;
         }
-        color = rho;
+        out_color = rho;
 
         vec4 ndc_pos = view * vec4(world_pos, 1.0f);
-        depth = -ndc_pos.z;
+        out_depth = -ndc_pos.z;
+
+        out_normal = world_normal * 0.5 + 0.5;
     }
 
-    vec3 xyY = rgb_to_xyY(color);
+    vec3 xyY = rgb_to_xyY(out_color);
     xyY.z = Tonemap_Uchimura(xyY.z);
+    out_color = rgb_to_srgb_approx(xyY_to_rgb(xyY));
 
-    color = rgb_to_srgb_approx(xyY_to_rgb(xyY));
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(color, 1.0));
-    imageStore(depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(depth));
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 1.0));
+    imageStore(depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_depth));
+    imageStore(normal_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 1.0));
 }
