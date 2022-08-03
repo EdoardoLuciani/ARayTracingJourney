@@ -104,13 +104,13 @@ impl VkCamera {
     pub fn update_host_buffer(&mut self) {
         if self.needs_update {
             let view = self.view_matrix();
-            let proj = Perspective3::new(self.aspect, self.fovy, self.znear, self.zfar);
+            let proj = self.perspective_matrix();
 
             let uniform = Uniform {
                 view,
                 view_inv: view.try_inverse().unwrap(),
-                proj: proj.to_homogeneous(),
-                proj_inv: proj.inverse(),
+                proj,
+                proj_inv: proj.try_inverse().unwrap(),
                 camera_pos: self.pos,
             };
 
@@ -186,6 +186,10 @@ impl VkCamera {
             &Vector3::new(0.0f32, -1.0f32, 0.0f32),
         )
         .to_homogeneous()
+    }
+
+    pub fn perspective_matrix(&self) -> Matrix4<f32> {
+        Perspective3::new(self.aspect, self.fovy, self.znear, self.zfar).to_homogeneous()
     }
 
     pub fn descriptor_set_layout(&self) -> vk::DescriptorSetLayout {

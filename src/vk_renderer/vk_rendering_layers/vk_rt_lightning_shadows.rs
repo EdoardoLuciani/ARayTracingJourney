@@ -129,7 +129,7 @@ impl VkRTLightningShadows {
             &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
             rendering_resolution,
             vk::Format::R16_SFLOAT,
-            vk::ImageUsageFlags::STORAGE,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
             &mut self.output_depth_image,
             &mut self.output_depth_image_view,
         );
@@ -141,8 +141,16 @@ impl VkRTLightningShadows {
         self.output_image.get_image()
     }
 
+    pub fn get_output_image_view(&self) -> vk::ImageView {
+        self.output_image_view
+    }
+
     pub fn get_output_depth_image(&self) -> vk::Image {
         self.output_depth_image.get_image()
+    }
+
+    pub fn get_output_depth_image_view(&self) -> vk::ImageView {
+        self.output_depth_image_view
     }
 
     pub fn trace_rays(

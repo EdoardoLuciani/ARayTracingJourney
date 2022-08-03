@@ -358,7 +358,8 @@ impl VkModel {
     }
 
     pub fn get_transform_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let row_matrix = self.uniform.model_matrix.transpose();
+        let m_matrix = self.uniform.model_matrix;
+        let row_matrix = m_matrix.transpose();
         let matrix: [f32; 12] = row_matrix.data.as_slice().try_into().unwrap();
         vk::TransformMatrixKHR { matrix }
     }
