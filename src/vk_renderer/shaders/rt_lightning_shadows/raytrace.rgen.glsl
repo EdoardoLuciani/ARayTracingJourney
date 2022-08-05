@@ -191,14 +191,16 @@ void main() {
         vec4 ndc_pos = view * vec4(world_pos, 1.0f);
         out_depth = -ndc_pos.z;
 
-        out_normal = world_normal * 0.5 + 0.5;
+        out_normal = normalize(mat3(transpose(view_inv)) * N);
+        out_normal.z = -out_normal.z;
+        out_normal = out_normal * 0.5 + 0.5;
     }
 
     vec3 xyY = rgb_to_xyY(out_color);
     xyY.z = Tonemap_Uchimura(xyY.z);
     out_color = rgb_to_srgb_approx(xyY_to_rgb(xyY));
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 1.0));
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 1.0));
     imageStore(depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_depth));
     imageStore(normal_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 1.0));
 }
