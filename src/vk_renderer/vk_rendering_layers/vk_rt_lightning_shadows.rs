@@ -561,6 +561,7 @@ impl Drop for VkRTLightningShadows {
                     &mut self.descriptor_set_allocation,
                     DescriptorSetAllocation::null(),
                 ));
+
             self.device.destroy_image_view(self.output_image_view, None);
             self.allocator
                 .as_ref()
@@ -570,6 +571,29 @@ impl Drop for VkRTLightningShadows {
                     &mut self.output_image,
                     std::mem::zeroed(),
                 ));
+
+            self.device
+                .destroy_image_view(self.output_normal_image_view, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_image(std::mem::replace(
+                    &mut self.output_normal_image,
+                    std::mem::zeroed(),
+                ));
+
+            self.device
+                .destroy_image_view(self.output_depth_image_view, None);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_image(std::mem::replace(
+                    &mut self.output_depth_image,
+                    std::mem::zeroed(),
+                ));
+
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_pipeline(self.pipeline, None);
