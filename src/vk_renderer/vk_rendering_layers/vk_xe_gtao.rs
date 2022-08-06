@@ -12,7 +12,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 
 const XE_GTAO_DEPTH_MIP_LEVELS: u32 = 5;
-const XE_GTAO_STAGES_COUNT: usize = 1;
 
 // xegtao settings
 const XE_GTAO_RADIUS: f32 = 0.5f32;
@@ -59,6 +58,37 @@ struct Stage {
     pub pipeline: vk::Pipeline,
 }
 
+impl Stage {
+    fn dispatch(
+        &self,
+        device: &ash::Device,
+        cb: vk::CommandBuffer,
+        image_memory_barriers: &[vk::ImageMemoryBarrier2],
+        additional_descriptor_set: vk::DescriptorSet,
+        group_count_x: u32,
+        group_count_y: u32,
+    ) {
+        let dependency_info =
+            vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
+        unsafe {
+            device.cmd_pipeline_barrier2(cb, &dependency_info);
+            device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, self.pipeline);
+            device.cmd_bind_descriptor_sets(
+                cb,
+                vk::PipelineBindPoint::COMPUTE,
+                self.pipeline_layout,
+                0,
+                &[
+                    self.descriptor_set.get_descriptor_sets()[0],
+                    additional_descriptor_set,
+                ],
+                &[],
+            );
+            device.cmd_dispatch(cb, group_count_x, group_count_y, 1);
+        }
+    }
+}
+
 #[derive(Copy, Clone)]
 pub enum DenoiseLevel {
     Disabled = 0,
@@ -69,14 +99,14 @@ pub enum DenoiseLevel {
 #[non_exhaustive]
 pub struct QualityLevel;
 impl QualityLevel {
-    pub const LOW: (u8, u8) = (1, 2);
-    pub const MEDIUM: (u8, u8) = (2, 2);
-    pub const HIGH: (u8, u8) = (3, 3);
-    pub const ULTRA: (u8, u8) = (9, 3);
+    pub const LOW: (f32, f32) = (1f32, 2f32);
+    pub const MEDIUM: (f32, f32) = (2f32, 2f32);
+    pub const HIGH: (f32, f32) = (3f32, 3f32);
+    pub const ULTRA: (f32, f32) = (9f32, 3f32);
 }
 pub struct GtaoSettings {
     pub denoise: DenoiseLevel,
-    pub quality: (u8, u8),
+    pub quality: (f32, f32),
 }
 
 pub struct VkXeGtao {
@@ -409,31 +439,13 @@ impl VkXeGtao {
                     })
                     .build(),
             ];
-            let dependency_info =
-                vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
-            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-
-            self.device.cmd_bind_pipeline(
+            self.shader_stages[0].dispatch(
+                &self.device,
                 cb,
-                vk::PipelineBindPoint::COMPUTE,
-                self.shader_stages[0].pipeline,
-            );
-            self.device.cmd_bind_descriptor_sets(
-                cb,
-                vk::PipelineBindPoint::COMPUTE,
-                self.shader_stages[0].pipeline_layout,
-                0,
-                &[
-                    self.shader_stages[0].descriptor_set.get_descriptor_sets()[0],
-                    self.xe_gtao_constants_descriptor_set.get_descriptor_sets()[0],
-                ],
-                &[],
-            );
-            self.device.cmd_dispatch(
-                cb,
+                &image_memory_barriers,
+                self.xe_gtao_constants_descriptor_set.get_descriptor_sets()[0],
                 (self.rendering_resolution.width + 16 - 1) / 16,
                 (self.rendering_resolution.height + 16 - 1) / 16,
-                1,
             );
 
             // main pass
@@ -519,32 +531,14 @@ impl VkXeGtao {
                     })
                     .build(),
             ];
-            let dependency_info =
-                vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
-            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-
-            self.device.cmd_bind_pipeline(
+            self.shader_stages[1].dispatch(
+                &self.device,
                 cb,
-                vk::PipelineBindPoint::COMPUTE,
-                self.shader_stages[1].pipeline,
-            );
-            self.device.cmd_bind_descriptor_sets(
-                cb,
-                vk::PipelineBindPoint::COMPUTE,
-                self.shader_stages[1].pipeline_layout,
-                0,
-                &[
-                    self.shader_stages[1].descriptor_set.get_descriptor_sets()[0],
-                    self.xe_gtao_constants_descriptor_set.get_descriptor_sets()[0],
-                ],
-                &[],
-            );
-            self.device.cmd_dispatch(
-                cb,
+                &image_memory_barriers,
+                self.xe_gtao_constants_descriptor_set.get_descriptor_sets()[0],
                 (self.rendering_resolution.width + XE_GTAO_NUMTHREADS_X - 1) / XE_GTAO_NUMTHREADS_X,
                 (self.rendering_resolution.height + XE_GTAO_NUMTHREADS_Y - 1)
                     / XE_GTAO_NUMTHREADS_Y,
-                1,
             );
 
             // denoise passes
@@ -608,31 +602,18 @@ impl VkXeGtao {
                 let dependency_info =
                     vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
                 self.device.cmd_pipeline_barrier2(cb, &dependency_info);
+
                 std::mem::swap(&mut denoise_image_src, &mut denoise_image_dst);
 
-                self.device.cmd_bind_pipeline(
+                shader_stage.dispatch(
+                    &self.device,
                     cb,
-                    vk::PipelineBindPoint::COMPUTE,
-                    shader_stage.pipeline,
-                );
-                self.device.cmd_bind_descriptor_sets(
-                    cb,
-                    vk::PipelineBindPoint::COMPUTE,
-                    shader_stage.pipeline_layout,
-                    0,
-                    &[
-                        shader_stage.descriptor_set.get_descriptor_sets()[0],
-                        self.xe_gtao_constants_descriptor_set.get_descriptor_sets()[0],
-                    ],
-                    &[],
-                );
-                self.device.cmd_dispatch(
-                    cb,
+                    &image_memory_barriers,
+                    self.xe_gtao_constants_descriptor_set.get_descriptor_sets()[0],
                     (self.rendering_resolution.width + (XE_GTAO_NUMTHREADS_X * 2) - 1)
                         / (XE_GTAO_NUMTHREADS_X * 2),
                     (self.rendering_resolution.height + XE_GTAO_NUMTHREADS_Y - 1)
                         / XE_GTAO_NUMTHREADS_Y,
-                    1,
                 );
             }
         }
@@ -926,7 +907,7 @@ impl VkXeGtao {
         input_depth_sampler: vk::Sampler,
         settings: &GtaoSettings,
     ) -> Vec<Stage> {
-        let mut shader_stages = Vec::<Stage>::with_capacity(XE_GTAO_STAGES_COUNT);
+        let mut shader_stages = Vec::<Stage>::new();
 
         // prefilter depth pass
         shader_stages.push({
@@ -957,13 +938,12 @@ impl VkXeGtao {
 
             let pipeline = Self::create_compute_pipeline(
                 &device,
-                &PathBuf::from(
-                    [
-                        shaders_spirv_location.to_str().unwrap(),
-                        "//prefilter_depths.comp.spirv",
-                    ]
-                    .concat(),
+                format!(
+                    "{}//{}",
+                    shaders_spirv_location.to_str().unwrap(),
+                    "prefilter_depths.comp.spirv"
                 ),
+                std::ptr::null(),
                 pipeline_layout,
             );
 
@@ -1021,15 +1001,35 @@ impl VkXeGtao {
             descriptor_set_layouts.extend_from_slice(additional_global_set_layouts);
             let pipeline_layout = Self::create_pipeline_layout(&device, &descriptor_set_layouts);
 
+            let entries = [
+                vk::SpecializationMapEntry {
+                    constant_id: 0,
+                    offset: 0,
+                    size: 4,
+                },
+                vk::SpecializationMapEntry {
+                    constant_id: 1,
+                    offset: 4,
+                    size: 4,
+                },
+            ];
+            let binary_data = [
+                settings.quality.0.to_ne_bytes(),
+                settings.quality.1.to_ne_bytes(),
+            ]
+            .concat();
+            let spec_info = vk::SpecializationInfo::builder()
+                .map_entries(&entries)
+                .data(&binary_data);
+
             let pipeline = Self::create_compute_pipeline(
                 &device,
-                &PathBuf::from(
-                    [
-                        shaders_spirv_location.to_str().unwrap(),
-                        "//main_pass.comp.spirv",
-                    ]
-                    .concat(),
+                format!(
+                    "{}//{}",
+                    shaders_spirv_location.to_str().unwrap(),
+                    "main_pass.comp.spirv"
                 ),
+                &spec_info.build() as *const _,
                 pipeline_layout,
             );
 
@@ -1076,13 +1076,12 @@ impl VkXeGtao {
         if settings.denoise as u8 > 0 {
             let denoise_pipeline = Self::create_compute_pipeline(
                 &device,
-                &PathBuf::from(
-                    [
-                        shaders_spirv_location.to_str().unwrap(),
-                        "//denoise.comp.spirv",
-                    ]
-                    .concat(),
+                format!(
+                    "{}//{}",
+                    shaders_spirv_location.to_str().unwrap(),
+                    "denoise.comp.spirv"
                 ),
+                std::ptr::null(),
                 denoise_pipeline_layout,
             );
 
@@ -1099,13 +1098,12 @@ impl VkXeGtao {
 
         let denoise_last_pipeline = Self::create_compute_pipeline(
             &device,
-            &PathBuf::from(
-                [
-                    shaders_spirv_location.to_str().unwrap(),
-                    "//denoise_last.comp.spirv",
-                ]
-                .concat(),
+            format!(
+                "{}//{}",
+                shaders_spirv_location.to_str().unwrap(),
+                "denoise_last.comp.spirv"
             ),
+            std::ptr::null(),
             denoise_pipeline_layout,
         );
 
@@ -1146,13 +1144,17 @@ impl VkXeGtao {
         }
     }
 
-    fn create_compute_pipeline(
+    fn create_compute_pipeline<T: AsRef<Path>>(
         device: &ash::Device,
-        shader_spirv_file: &Path,
+        shader_spirv_file: T,
+        cs_shader_spec_info: *const vk::SpecializationInfo,
         pipeline_layout: vk::PipelineLayout,
     ) -> vk::Pipeline {
+        let mut shader_stage = vk_create_shader_stage(shader_spirv_file, &device);
+        shader_stage.p_specialization_info = cs_shader_spec_info;
+
         let compute_pipelines_ci = vk::ComputePipelineCreateInfo::builder()
-            .stage(vk_create_shader_stage(shader_spirv_file, &device))
+            .stage(shader_stage)
             .layout(pipeline_layout)
             .build();
         let pipeline = unsafe {

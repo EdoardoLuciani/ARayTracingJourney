@@ -267,8 +267,8 @@ impl VulkanTempleRayTracedRenderer {
             allocator.clone(),
             window_size,
             GtaoSettings {
-                denoise: DenoiseLevel::Disabled,
-                quality: QualityLevel::MEDIUM,
+                denoise: DenoiseLevel::Soft,
+                quality: QualityLevel::ULTRA,
             },
             std::path::Path::new("assets//shaders-spirv"),
             lightning_layer.get_output_depth_image(),

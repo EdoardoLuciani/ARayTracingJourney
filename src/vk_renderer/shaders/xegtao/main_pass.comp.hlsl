@@ -4,6 +4,9 @@
 #include "XeGTAO.h"
 #include "XeGTAO.hlsli"
 
+[[vk::constant_id(0)]] const float slice_count = 3;
+[[vk::constant_id(1)]] const float steps_per_slice = 3;
+
 [[vk::combinedImageSampler]][[vk::binding(0, 0)]]
 Texture2D<lpfloat>          g_srcWorkingDepth;   // viewspace depth with MIPs, output by XeGTAO_PrefilterDepths16x16 and consumed by XeGTAO_MainPass
 [[vk::combinedImageSampler]][[vk::binding(0, 0)]]
@@ -65,5 +68,5 @@ lpfloat2 SpatioTemporalNoise( uint2 pixCoord, uint temporalIndex )    // without
 [numthreads(XE_GTAO_NUMTHREADS_X, XE_GTAO_NUMTHREADS_Y, 1)]
 void main( const uint2 pixCoord : SV_DispatchThreadID ) {
 // g_samplerPointClamp is a sampler with D3D12_FILTER_MIN_MAG_MIP_POINT filter and D3D12_TEXTURE_ADDRESS_MODE_CLAMP addressing mode
-XeGTAO_MainPass( pixCoord, 9, 3, SpatioTemporalNoise(pixCoord, g_GTAOConsts.NoiseIndex), LoadNormal(pixCoord), g_GTAOConsts, g_srcWorkingDepth, g_samplerPointClamp, g_outWorkingAOTerm, g_outWorkingEdges );
+XeGTAO_MainPass( pixCoord, lpfloat(slice_count), lpfloat(steps_per_slice), SpatioTemporalNoise(pixCoord, g_GTAOConsts.NoiseIndex), LoadNormal(pixCoord), g_GTAOConsts, g_srcWorkingDepth, g_samplerPointClamp, g_outWorkingAOTerm, g_outWorkingEdges );
 }
