@@ -377,19 +377,19 @@ impl VkRTLightningShadows {
     ) -> (vk::PipelineLayout, vk::Pipeline) {
         let shader_stages = [
             vk_create_shader_stage(
-                format!("{}{}", path.to_str().unwrap(), "raytrace.rgen.spirv"),
+                format!("{}//{}", path.to_str().unwrap(), "raytrace.rgen.spirv"),
                 device,
             ),
             vk_create_shader_stage(
-                format!("{}{}", path.to_str().unwrap(), "raytrace.rmiss.spirv"),
+                format!("{}//{}", path.to_str().unwrap(), "raytrace.rmiss.spirv"),
                 device,
             ),
             vk_create_shader_stage(
-                format!("{}{}", path.to_str().unwrap(), "shadow.rmiss.spirv"),
+                format!("{}//{}", path.to_str().unwrap(), "shadow.rmiss.spirv"),
                 device,
             ),
             vk_create_shader_stage(
-                format!("{}{}", path.to_str().unwrap(), "raytrace.rchit.spirv"),
+                format!("{}//{}", path.to_str().unwrap(), "raytrace.rchit.spirv"),
                 device,
             ),
         ];

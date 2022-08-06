@@ -31,7 +31,7 @@ rpath = false
 
 [dependencies]
 num = "0.4.0"
-ash = "0.36.0+1.3.206"
+ash = "0.36.0"
 winit = "0.27.1"
 raw-window-handle = "0.5.0"
 gpu-allocator = "0.18.0"
