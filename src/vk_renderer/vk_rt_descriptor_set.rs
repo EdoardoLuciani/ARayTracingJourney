@@ -5,7 +5,6 @@ use crate::vk_renderer::vk_allocator::vk_descriptor_sets_allocator::DescriptorSe
 use crate::vk_renderer::vk_allocator::VkAllocator;
 use ash::vk;
 use std::cell::RefCell;
-use std::ops::DerefMut;
 use std::rc::Rc;
 
 pub struct VkRTDescriptorSet {
@@ -14,7 +13,6 @@ pub struct VkRTDescriptorSet {
     image_sampler: vk::Sampler,
     model_info_host_allocation: SubAllocationData,
     model_info_device_allocation: SubAllocationData,
-    model_info_bytes_occupied: u64,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_set_allocation: DescriptorSetAllocation,
 }
@@ -120,7 +118,6 @@ impl VkRTDescriptorSet {
             image_sampler,
             model_info_host_allocation,
             model_info_device_allocation,
-            model_info_bytes_occupied: 0,
             descriptor_set_layout,
             descriptor_set_allocation,
         }

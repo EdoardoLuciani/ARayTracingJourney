@@ -3,7 +3,7 @@ pub mod vk_descriptor_sets_allocator;
 pub mod vk_memory_resource_allocator;
 
 use ash::vk;
-use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
+use gpu_allocator::MemoryLocation;
 use std::cell::RefCell;
 use std::rc::Rc;
 use vk_buffers_suballocator::VkBuffersSubAllocator;

@@ -1,15 +1,14 @@
 use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::iter::zip;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::vk_blas_builder::VkBlasBuilder;
 use crate::vk_renderer::vk_blas_builder::Blas;
+use ash::vk;
 use ash::vk::CommandBuffer;
-use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
 use nalgebra::*;
 
@@ -73,12 +72,11 @@ impl VkModelTransferLocation for Host {
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
-        let (device_mesh_indices_buffer, mut primitives_info) = vk_model
-            .transfer_from_host_to_device(
-                cb,
-                self.host_buffer_allocation,
-                self.host_model_copy_info,
-            );
+        let (device_mesh_indices_buffer, primitives_info) = vk_model.transfer_from_host_to_device(
+            cb,
+            self.host_buffer_allocation,
+            self.host_model_copy_info,
+        );
 
         let host_uniform_sub_allocation = vk_model
             .allocator
@@ -386,7 +384,7 @@ impl VkModel {
     }
 
     pub fn get_device_primitives_count(&self) -> Option<u32> {
-        if let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()? {
+        if let Some(device_state) = self.state.as_ref()?.as_any().downcast_ref::<Device>() {
             Some(device_state.device_primitives_info.len() as u32)
         } else {
             None

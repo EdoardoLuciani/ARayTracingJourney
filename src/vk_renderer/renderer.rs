@@ -7,11 +7,13 @@ use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_blas_builder::VkBlasBuilder;
 use crate::vk_renderer::vk_camera::VkCamera;
 use crate::vk_renderer::vk_lights::VkLights;
+use crate::vk_renderer::vk_rendering_layers::vk_xe_gtao::{
+    DenoiseLevel, GtaoSettings, QualityLevel, VkXeGtao,
+};
 use crate::vk_renderer::vk_rt_descriptor_set::DescriptorSetPrimitiveInfo;
 use ash::{extensions::*, vk};
 use nalgebra::*;
 use std::cell::RefCell;
-use std::mem::ManuallyDrop;
 use std::rc::Rc;
 
 struct CommandRecordInfo {
@@ -126,7 +128,8 @@ pub struct VulkanTempleRayTracedRenderer {
     lights: VkLights,
     rt_descriptor_set: VkRTDescriptorSet,
     rendered_frames: u64,
-    rendering_layer: VkRTLightningShadows,
+    lightning_layer: VkRTLightningShadows,
+    ao_layer: VkXeGtao,
     frames_data: [FrameData; 3],
     bvk: vk_base::VkBase,
 }
@@ -243,7 +246,7 @@ impl VulkanTempleRayTracedRenderer {
             device.begin_command_buffer(init_cb, &begin_info).unwrap();
         }
 
-        let rendering_layer = VkRTLightningShadows::new(
+        let lightning_layer = VkRTLightningShadows::new(
             device.clone(),
             ray_tracing_pipeline_fp.clone(),
             &ray_tracing_pipeline_properties,
@@ -257,6 +260,21 @@ impl VulkanTempleRayTracedRenderer {
             window_size,
             vk::Format::R8G8B8A8_UNORM,
             init_cb,
+        );
+
+        let ao_layer = VkXeGtao::new(
+            device.clone(),
+            allocator.clone(),
+            window_size,
+            GtaoSettings {
+                denoise: DenoiseLevel::Disabled,
+                quality: QualityLevel::MEDIUM,
+            },
+            std::path::Path::new("assets//shaders-spirv"),
+            lightning_layer.get_output_depth_image(),
+            lightning_layer.get_output_depth_image_view(),
+            lightning_layer.get_output_normal_image(),
+            lightning_layer.get_output_normal_image_view(),
         );
 
         let frames_data: [FrameData; 3] = (0..3)
@@ -279,7 +297,7 @@ impl VulkanTempleRayTracedRenderer {
             .ok()
             .unwrap();
 
-        let mut rtr = VulkanTempleRayTracedRenderer {
+        let rtr = VulkanTempleRayTracedRenderer {
             bvk,
             device,
             acceleration_structure_fp,
@@ -290,7 +308,8 @@ impl VulkanTempleRayTracedRenderer {
             camera,
             lights,
             rt_descriptor_set,
-            rendering_layer,
+            lightning_layer,
+            ao_layer,
             frames_data,
             rendered_frames: 0,
         };
@@ -320,9 +339,11 @@ impl VulkanTempleRayTracedRenderer {
     pub fn prepare_first_frame(&mut self) {
         let frame_data_idx = self.rendered_frames as usize % self.frames_data.len();
         unsafe {
-            self.device.reset_fences(std::slice::from_ref(
-                &self.frames_data[frame_data_idx].after_exec_fence,
-            ));
+            self.device
+                .reset_fences(std::slice::from_ref(
+                    &self.frames_data[frame_data_idx].after_exec_fence,
+                ))
+                .unwrap();
             self.record_main_command(frame_data_idx);
         }
     }
@@ -331,6 +352,13 @@ impl VulkanTempleRayTracedRenderer {
         let current_frame_idx = self.rendered_frames as usize % self.frames_data.len();
 
         self.camera.update_host_buffer();
+
+        self.ao_layer.set_constants(
+            self.camera.znear(),
+            self.camera.zfar(),
+            self.camera.fovy(),
+            self.camera.aspect(),
+        );
 
         let swapchain_image_idx = unsafe {
             let res = self.bvk.get_swapchain_fn().acquire_next_image(
@@ -476,7 +504,7 @@ impl VulkanTempleRayTracedRenderer {
         let presentation_resolution = rendering_resolution;
 
         unsafe {
-            self.device.device_wait_idle();
+            self.device.device_wait_idle().unwrap();
         }
         self.bvk.recreate_swapchain(
             vk::PresentModeKHR::FIFO,
@@ -487,8 +515,16 @@ impl VulkanTempleRayTracedRenderer {
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
             },
         );
-        self.rendering_layer
+        self.lightning_layer
             .resize(rendering_resolution, vk::Format::R8G8B8A8_UNORM);
+
+        self.ao_layer.resize(
+            rendering_resolution,
+            self.lightning_layer.get_output_depth_image(),
+            self.lightning_layer.get_output_depth_image_view(),
+            self.lightning_layer.get_output_normal_image(),
+            self.lightning_layer.get_output_normal_image_view(),
+        );
 
         for i in 0..self.frames_data.len() {
             self.frames_data[i].recreate_fence();
@@ -500,10 +536,12 @@ impl VulkanTempleRayTracedRenderer {
     fn record_static_command_buffers(&self, frame_data_idx: usize) {
         let frame_data = &self.frames_data[frame_data_idx];
         unsafe {
-            self.device.reset_command_pool(
-                frame_data.presentation_cri.command_pool,
-                vk::CommandPoolResetFlags::empty(),
-            );
+            self.device
+                .reset_command_pool(
+                    frame_data.presentation_cri.command_pool,
+                    vk::CommandPoolResetFlags::empty(),
+                )
+                .unwrap();
         }
         for (i, cb) in frame_data
             .presentation_cri
@@ -514,7 +552,9 @@ impl VulkanTempleRayTracedRenderer {
         {
             unsafe {
                 let command_buffer_bi = vk::CommandBufferBeginInfo::default();
-                self.device.begin_command_buffer(cb, &command_buffer_bi);
+                self.device
+                    .begin_command_buffer(cb, &command_buffer_bi)
+                    .unwrap();
             }
             let image_memory_barriers = [
                 vk::ImageMemoryBarrier2::builder()
@@ -524,7 +564,7 @@ impl VulkanTempleRayTracedRenderer {
                     .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
                     .old_layout(vk::ImageLayout::GENERAL)
                     .new_layout(vk::ImageLayout::GENERAL)
-                    .image(self.rendering_layer.get_output_image())
+                    .image(self.lightning_layer.get_output_image())
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -586,7 +626,7 @@ impl VulkanTempleRayTracedRenderer {
                     },
                 ]);
             let image_blit_info = vk::BlitImageInfo2::builder()
-                .src_image(self.rendering_layer.get_output_image())
+                .src_image(self.lightning_layer.get_output_image())
                 .src_image_layout(vk::ImageLayout::GENERAL)
                 .dst_image(self.bvk.get_swapchain_images()[i])
                 .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
@@ -715,7 +755,7 @@ impl VulkanTempleRayTracedRenderer {
 
         self.lights.update_host_and_device_buffer(cb);
 
-        self.rendering_layer.trace_rays(
+        self.lightning_layer.trace_rays(
             cb,
             &[
                 self.rt_descriptor_set.descriptor_set(),
@@ -723,6 +763,8 @@ impl VulkanTempleRayTracedRenderer {
                 self.lights.descriptor_set(),
             ],
         );
+
+        self.ao_layer.compute_ao(cb);
 
         unsafe {
             self.device.end_command_buffer(cb).unwrap();

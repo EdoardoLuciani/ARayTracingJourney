@@ -102,7 +102,7 @@ void main() {
               0               // payload (location = 0)
     );
 
-    float out_depth = 0.0;
+    float out_depth = 10000.0;
     vec3 out_color = vec3(0.0);
     vec3 out_normal = vec3(0.0);
     if (hit_payload.primitive_info_idx >= 0) {

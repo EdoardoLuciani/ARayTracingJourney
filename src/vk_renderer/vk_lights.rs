@@ -4,8 +4,6 @@ use crate::vk_renderer::lights::LightShaderData;
 use crate::vk_renderer::vk_allocator::vk_buffers_suballocator::SubAllocationData;
 use crate::vk_renderer::vk_allocator::vk_descriptor_sets_allocator::DescriptorSetAllocation;
 use ash::vk;
-use itertools::all;
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::rc::Rc;
 

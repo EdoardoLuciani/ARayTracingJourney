@@ -1,7 +1,7 @@
 use hassle_rs;
 use hassle_rs::HassleError;
-use shaderc::{IncludeCallbackResult, IncludeType, ResolvedInclude};
-use std::ffi::{OsStr, OsString};
+use shaderc::{IncludeType, ResolvedInclude};
+use std::ffi::OsStr;
 use std::fs::File;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
