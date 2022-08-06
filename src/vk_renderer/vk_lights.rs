@@ -175,26 +175,20 @@ impl Drop for VkLights {
         unsafe {
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
+
+            let mut al = self.allocator.as_ref().borrow_mut();
+
+            al.get_host_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.host_suballocation,
                     std::mem::zeroed(),
                 ));
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
+            al.get_device_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.device_suballocation,
                     std::mem::zeroed(),
                 ));
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_descriptor_set_allocator_mut()
+            al.get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
                     DescriptorSetAllocation::null(),

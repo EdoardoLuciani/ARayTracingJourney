@@ -208,23 +208,20 @@ impl Drop for VkCamera {
                 .destroy_descriptor_set_layout(self.uniform_descriptor_set_layout, None);
         }
 
-        self.allocator
-            .as_ref()
-            .borrow_mut()
-            .get_host_uniform_sub_allocator_mut()
-            .free(unsafe {
-                std::mem::replace(&mut self.host_uniform_suballocation, std::mem::zeroed())
-            });
+        let mut al = self.allocator.as_ref().borrow_mut();
 
-        self.allocator
-            .as_ref()
-            .borrow_mut()
-            .get_descriptor_set_allocator_mut()
-            .free_descriptor_sets(unsafe {
-                std::mem::replace(
-                    &mut self.uniform_descriptor_set_allocation,
-                    DescriptorSetAllocation::null(),
-                )
-            });
+        take_mut::take(&mut self.host_uniform_suballocation, |suballocation| {
+            al.get_host_uniform_sub_allocator_mut().free(suballocation);
+            unsafe { std::mem::zeroed() }
+        });
+
+        take_mut::take(
+            &mut self.uniform_descriptor_set_allocation,
+            |ds_allocation| {
+                al.get_descriptor_set_allocator_mut()
+                    .free_descriptor_sets(ds_allocation);
+                unsafe { DescriptorSetAllocation::null() }
+            },
+        );
     }
 }

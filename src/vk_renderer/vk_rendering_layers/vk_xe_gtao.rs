@@ -1191,68 +1191,47 @@ impl Drop for VkXeGtao {
             self.device
                 .destroy_descriptor_set_layout(self.xe_gtao_constants_descriptor_set_layout, None);
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_descriptor_set_allocator_mut()
+            let mut al = self.allocator.as_ref().borrow_mut();
+
+            al.get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.xe_gtao_constants_descriptor_set,
                     DescriptorSetAllocation::null(),
                 ));
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
+            al.get_host_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.xe_gtao_host_allocation,
                     std::mem::zeroed(),
                 ));
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(
-                    &mut self.filter_depth_image,
-                    std::mem::zeroed(),
-                ));
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.filter_depth_image,
+                std::mem::zeroed(),
+            ));
             self.device
                 .destroy_image_view(self.filter_depth_single_image_view, None);
             self.filter_depth_image_views.iter().for_each(|image_view| {
                 self.device.destroy_image_view(*image_view, None);
             });
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
+            al.get_allocator_mut()
                 .destroy_image(std::mem::replace(&mut self.ao_image, std::mem::zeroed()));
             self.device.destroy_image_view(self.ao_image_view, None);
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
+            al.get_allocator_mut()
                 .destroy_image(std::mem::replace(&mut self.edges_image, std::mem::zeroed()));
             self.device.destroy_image_view(self.edges_image_view, None);
 
             #[cfg(debug_assertions)]
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
+            al.get_allocator_mut()
                 .destroy_image(std::mem::replace(&mut self.debug_image, std::mem::zeroed()));
             #[cfg(debug_assertions)]
             self.device.destroy_image_view(self.debug_image_view, None);
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(
-                    &mut self.out_ao_image,
-                    std::mem::zeroed(),
-                ));
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.out_ao_image,
+                std::mem::zeroed(),
+            ));
             self.device.destroy_image_view(self.out_ao_image_view, None);
 
             self.device
@@ -1276,10 +1255,7 @@ impl Drop for VkXeGtao {
                         self.device.destroy_pipeline(shader_stage.pipeline, None);
                     }
 
-                    self.allocator
-                        .as_ref()
-                        .borrow_mut()
-                        .get_descriptor_set_allocator_mut()
+                    al.get_descriptor_set_allocator_mut()
                         .free_descriptor_sets(std::mem::replace(
                             &mut shader_stage.descriptor_set,
                             DescriptorSetAllocation::null(),

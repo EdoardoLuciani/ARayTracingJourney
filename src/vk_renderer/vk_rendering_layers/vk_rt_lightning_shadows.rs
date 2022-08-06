@@ -555,54 +555,39 @@ impl Drop for VkRTLightningShadows {
         unsafe {
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_descriptor_set_allocator_mut()
+
+            let mut al = self.allocator.as_ref().borrow_mut();
+
+            al.get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
                     DescriptorSetAllocation::null(),
                 ));
 
             self.device.destroy_image_view(self.output_image_view, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(
-                    &mut self.output_image,
-                    std::mem::zeroed(),
-                ));
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_image,
+                std::mem::zeroed(),
+            ));
 
             self.device
                 .destroy_image_view(self.output_normal_image_view, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(
-                    &mut self.output_normal_image,
-                    std::mem::zeroed(),
-                ));
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_normal_image,
+                std::mem::zeroed(),
+            ));
 
             self.device
                 .destroy_image_view(self.output_depth_image_view, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(
-                    &mut self.output_depth_image,
-                    std::mem::zeroed(),
-                ));
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_depth_image,
+                std::mem::zeroed(),
+            ));
 
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_pipeline(self.pipeline, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
+            al.get_allocator_mut()
                 .destroy_buffer(std::mem::replace(&mut self.sbt_buffer, std::mem::zeroed()));
         }
     }
