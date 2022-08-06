@@ -332,23 +332,25 @@ impl VkRTLightningShadows {
         unsafe {
             device.destroy_image_view(*image_view, None);
         }
-        allocator.destroy_image(std::mem::replace(image, unsafe { std::mem::zeroed() }));
+        take_mut::take(image, |image| {
+            allocator.destroy_image(image);
 
-        let image_ci = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(vk::Extent3D {
-                width: resolution.width,
-                height: resolution.height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(usage)
-            .initial_layout(vk::ImageLayout::UNDEFINED);
-        *image = allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly);
+            let image_ci = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width: resolution.width,
+                    height: resolution.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly)
+        });
 
         let image_view_ci = vk::ImageViewCreateInfo::builder()
             .image(image.get_image())

@@ -168,35 +168,18 @@ impl VkRTDescriptorSet {
         let required_buffer_size =
             shader_primitive_infos.len() * std::mem::size_of::<ShaderPrimitiveInfo>();
         if required_buffer_size > self.model_info_host_allocation.get_size() {
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
-                .free(std::mem::replace(
-                    &mut self.model_info_host_allocation,
-                    unsafe { std::mem::zeroed() },
-                ));
-            self.model_info_host_allocation = self
-                .allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
-                .allocate(required_buffer_size, 1);
+            let mut al = self.allocator.as_ref().borrow_mut();
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
-                .free(std::mem::replace(
-                    &mut self.model_info_device_allocation,
-                    unsafe { std::mem::zeroed() },
-                ));
-            self.model_info_device_allocation = self
-                .allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
-                .allocate(required_buffer_size, 1);
+            take_mut::take(&mut self.model_info_host_allocation, |allocation| {
+                al.get_host_uniform_sub_allocator_mut().free(allocation);
+                al.get_host_uniform_sub_allocator_mut()
+                    .allocate(required_buffer_size, 128)
+            });
+            take_mut::take(&mut self.model_info_device_allocation, |allocation| {
+                al.get_device_uniform_sub_allocator_mut().free(allocation);
+                al.get_device_uniform_sub_allocator_mut()
+                    .allocate(required_buffer_size, 128)
+            });
         }
 
         let dst_slice = unsafe {

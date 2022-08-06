@@ -802,10 +802,6 @@ impl VkXeGtao {
             &mut val.get_allocator_mut();
 
         unsafe {
-            memory_resource_allocator.destroy_image(std::mem::replace(
-                &mut self.filter_depth_image,
-                std::mem::zeroed(),
-            ));
             self.filter_depth_image_views
                 .drain(..)
                 .for_each(|image_view| {
@@ -814,28 +810,31 @@ impl VkXeGtao {
 
             self.device
                 .destroy_image_view(self.filter_depth_single_image_view, None);
+
+            take_mut::take(&mut self.filter_depth_image, |image| {
+                memory_resource_allocator.destroy_image(image);
+
+                let image_ci = vk::ImageCreateInfo::builder()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(vk::Format::R16_SFLOAT)
+                    .extent(vk::Extent3D {
+                        width: image_extent.width,
+                        height: image_extent.height,
+                        depth: 1,
+                    })
+                    .mip_levels(XE_GTAO_DEPTH_MIP_LEVELS)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED);
+                memory_resource_allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly)
+            });
         }
 
-        let image_ci = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(vk::Format::R16_SFLOAT)
-            .extent(vk::Extent3D {
-                width: image_extent.width,
-                height: image_extent.height,
-                depth: 1,
-            })
-            .mip_levels(XE_GTAO_DEPTH_MIP_LEVELS)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED);
-        let image_allocation =
-            memory_resource_allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly);
-
-        let image_views = unsafe {
+        self.filter_depth_image_views = unsafe {
             (0..XE_GTAO_DEPTH_MIP_LEVELS)
                 .map(|i| {
                     let image_view_ci = vk::ImageViewCreateInfo::builder()
-                        .image(image_allocation.get_image())
+                        .image(self.filter_depth_image.get_image())
                         .view_type(vk::ImageViewType::TYPE_2D)
                         .format(vk::Format::R16_SFLOAT)
                         .components(vk::ComponentMapping::default())
@@ -851,9 +850,9 @@ impl VkXeGtao {
                 .collect::<Vec<_>>()
         };
 
-        let image_view = unsafe {
+        self.filter_depth_single_image_view = unsafe {
             let image_view_ci = vk::ImageViewCreateInfo::builder()
-                .image(image_allocation.get_image())
+                .image(self.filter_depth_image.get_image())
                 .view_type(vk::ImageViewType::TYPE_2D)
                 .format(vk::Format::R16_SFLOAT)
                 .components(vk::ComponentMapping::default())
@@ -866,10 +865,6 @@ impl VkXeGtao {
                 });
             self.device.create_image_view(&image_view_ci, None).unwrap()
         };
-
-        self.filter_depth_image = image_allocation;
-        self.filter_depth_image_views = image_views;
-        self.filter_depth_single_image_view = image_view;
     }
 
     fn replace_output_image(
@@ -884,23 +879,25 @@ impl VkXeGtao {
         unsafe {
             device.destroy_image_view(*image_view, None);
         }
-        allocator.destroy_image(std::mem::replace(image, unsafe { std::mem::zeroed() }));
+        take_mut::take(image, |image| {
+            allocator.destroy_image(image);
 
-        let image_ci = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(vk::Extent3D {
-                width: resolution.width,
-                height: resolution.height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(usage)
-            .initial_layout(vk::ImageLayout::UNDEFINED);
-        *image = allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly);
+            let image_ci = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width: resolution.width,
+                    height: resolution.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly)
+        });
 
         let image_view_ci = vk::ImageViewCreateInfo::builder()
             .image(image.get_image())

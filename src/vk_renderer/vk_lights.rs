@@ -139,33 +139,17 @@ impl VkLights {
     }
 
     fn recreate_buffers(&mut self, new_size: usize) {
-        self.allocator
-            .as_ref()
-            .borrow_mut()
-            .get_host_uniform_sub_allocator_mut()
-            .free(std::mem::replace(&mut self.host_suballocation, unsafe {
-                std::mem::zeroed()
-            }));
-        self.allocator
-            .as_ref()
-            .borrow_mut()
-            .get_device_uniform_sub_allocator_mut()
-            .free(std::mem::replace(&mut self.device_suballocation, unsafe {
-                std::mem::zeroed()
-            }));
-
-        self.host_suballocation = self
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_host_uniform_sub_allocator_mut()
-            .allocate(new_size, 128);
-        self.device_suballocation = self
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_device_uniform_sub_allocator_mut()
-            .allocate(new_size, 128);
+        let mut al = self.allocator.as_ref().borrow_mut();
+        take_mut::take(&mut self.host_suballocation, |allocation| {
+            al.get_host_uniform_sub_allocator_mut().free(allocation);
+            al.get_host_uniform_sub_allocator_mut()
+                .allocate(new_size, 128)
+        });
+        take_mut::take(&mut self.device_suballocation, |allocation| {
+            al.get_device_uniform_sub_allocator_mut().free(allocation);
+            al.get_device_uniform_sub_allocator_mut()
+                .allocate(new_size, 128)
+        });
     }
 
     fn update_descriptor_set(&self, lights_byte_size: u64) {
