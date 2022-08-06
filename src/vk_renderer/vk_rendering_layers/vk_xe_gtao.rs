@@ -399,6 +399,13 @@ impl VkXeGtao {
         };
     }
 
+    pub fn output_ao_image(&self) -> vk::Image {
+        match self.gtao_settings.denoise as u8 {
+            2 => self.out_ao_image.get_image(),
+            _ => self.ao_image.get_image(),
+        }
+    }
+
     pub fn compute_ao(&mut self, cb: vk::CommandBuffer) {
         let constants = unsafe {
             &mut *(self
@@ -1086,7 +1093,7 @@ impl VkXeGtao {
         let denoise_pipeline_layout =
             Self::create_pipeline_layout(&device, &descriptor_set_layouts);
 
-        if settings.denoise as u8 > 0 {
+        if settings.denoise as u8 > 1 {
             let denoise_pipeline = Self::create_compute_pipeline(
                 &device,
                 format!(
@@ -1098,7 +1105,7 @@ impl VkXeGtao {
                 denoise_pipeline_layout,
             );
 
-            (0..settings.denoise as u8).for_each(|_| {
+            (0..settings.denoise as u8 - 1).for_each(|_| {
                 shader_stages.push(Stage {
                     descriptor_set_layout: denoise_descriptor_set_layout,
                     descriptor_set: descriptor_set_allocator
