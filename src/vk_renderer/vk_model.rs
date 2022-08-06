@@ -968,6 +968,21 @@ impl VkModel {
                 vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
             );
 
+        unsafe {
+            let buffer_memory_barrier = vk::BufferMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                .buffer(blas.get_blas_allocation().get_buffer())
+                .offset(0)
+                .size(vk::WHOLE_SIZE)
+                .build();
+            let dependency_info = vk::DependencyInfo::builder()
+                .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier));
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
+        }
+
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanups.push(Box::new(BlasBuild {
             scratch_buffer: blas.release_scratch_buffer(),

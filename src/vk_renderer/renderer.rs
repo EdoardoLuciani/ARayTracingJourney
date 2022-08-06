@@ -680,27 +680,8 @@ impl VulkanTempleRayTracedRenderer {
                 .unwrap();
         }
 
-        let mut blas_buffer_memory_barriers = Vec::<vk::BufferMemoryBarrier2>::new();
         for model in self.models.iter_mut() {
             model.update_model_status(&self.camera.pos(), cb);
-            if let Some(blas_buffer) = model.get_blas_buffer() {
-                blas_buffer_memory_barriers.push(
-                    vk::BufferMemoryBarrier2::builder()
-                        .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                        .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
-                        .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-                        .dst_access_mask(vk::AccessFlags2::SHADER_READ)
-                        .buffer(blas_buffer)
-                        .offset(0)
-                        .size(vk::WHOLE_SIZE)
-                        .build(),
-                );
-            }
-        }
-        let dependency_info =
-            vk::DependencyInfo::builder().buffer_memory_barriers(&blas_buffer_memory_barriers);
-        unsafe {
-            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
         let mut instance_custom_index = 0;
@@ -717,20 +698,6 @@ impl VulkanTempleRayTracedRenderer {
 
         self.rt_descriptor_set
             .set_tlas(frame_data.tlas_builder.get_tlas().unwrap());
-
-        let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
-            .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
-            .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
-            .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-            .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
-            .buffer(frame_data.tlas_builder.get_tlas_buffer().unwrap())
-            .offset(0)
-            .size(vk::WHOLE_SIZE);
-        let dependency_info = vk::DependencyInfo::builder()
-            .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
-        unsafe {
-            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-        }
 
         let mut primitives_info = Vec::new();
         for model in self.models.iter() {
