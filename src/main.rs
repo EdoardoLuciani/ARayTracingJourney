@@ -25,7 +25,7 @@ fn main() {
             width: window_size.0,
             height: window_size.1,
         },
-        window.get_window_handle(),
+        (window.get_window_handle(), window.get_display_handle()),
     );
     renderer.add_model(
         std::path::Path::new("assets/models/Sponza.glb"),

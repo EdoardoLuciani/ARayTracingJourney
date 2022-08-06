@@ -137,7 +137,10 @@ pub struct VulkanTempleRayTracedRenderer {
 impl VulkanTempleRayTracedRenderer {
     pub fn new(
         window_size: vk::Extent2D,
-        window_handle: raw_window_handle::RawWindowHandle,
+        window_display_handle: (
+            raw_window_handle::RawWindowHandle,
+            raw_window_handle::RawDisplayHandle,
+        ),
     ) -> Self {
         let mut physical_device_ray_tracing_pipeline =
             vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(true);
@@ -179,7 +182,7 @@ impl VulkanTempleRayTracedRenderer {
             ],
             &physical_device_features2,
             std::slice::from_ref(&(vk::QueueFlags::GRAPHICS, 1.0f32)),
-            Some(window_handle),
+            Some(window_display_handle),
         );
         bvk.recreate_swapchain(
             vk::PresentModeKHR::FIFO,

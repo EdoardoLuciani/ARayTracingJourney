@@ -6,7 +6,7 @@ use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::os::raw::c_char;
 
-use raw_window_handle::RawWindowHandle;
+use raw_window_handle::{RawDisplayHandle, RawWindowHandle};
 
 pub struct VkBase {
     entry_fn: ash::Entry,
@@ -41,7 +41,7 @@ impl VkBase {
         device_extensions: &[&str],
         desired_physical_device_features2: &vk::PhysicalDeviceFeatures2,
         desired_queues_with_priorities: &[(vk::QueueFlags, f32)],
-        window_handle: Option<RawWindowHandle>,
+        window_display_handle: Option<(RawWindowHandle, RawDisplayHandle)>,
     ) -> Self {
         let mut instance_extensions = Vec::from(instance_extensions);
         cfg_if::cfg_if! {
@@ -63,9 +63,9 @@ impl VkBase {
         }
 
         // adding the required extensions needed for creating a surface based on the os
-        if let Some(handle) = window_handle {
+        if let Some(handle) = window_display_handle {
             instance_extensions.push("VK_KHR_surface");
-            match handle {
+            match handle.0 {
                 RawWindowHandle::Win32(_) => {
                     instance_extensions.push("VK_KHR_win32_surface");
                 }
@@ -116,29 +116,29 @@ impl VkBase {
 
         // Creating the surface based on os
         let surface = unsafe {
-            match window_handle {
-                Some(RawWindowHandle::Win32(handle)) => {
+            match window_display_handle {
+                Some((RawWindowHandle::Win32(window), RawDisplayHandle::Windows(display))) => {
                     let surface_desc = vk::Win32SurfaceCreateInfoKHR::builder()
-                        .hinstance(handle.hinstance)
-                        .hwnd(handle.hwnd);
+                        .hinstance(window.hinstance)
+                        .hwnd(window.hwnd);
                     let win_surface_fn = khr::Win32Surface::new(&entry_fn, &instance);
                     win_surface_fn
                         .create_win32_surface(&surface_desc, None)
                         .unwrap()
                 }
-                Some(RawWindowHandle::Xlib(handle)) => {
+                Some((RawWindowHandle::Xlib(window), RawDisplayHandle::Xlib(display))) => {
                     let surface_desc = vk::XlibSurfaceCreateInfoKHR::builder()
-                        .dpy(handle.display as *mut _)
-                        .window(handle.window);
+                        .dpy(display.display as *mut _)
+                        .window(window.window);
                     let xlib_surface_fn = khr::XlibSurface::new(&entry_fn, &instance);
                     xlib_surface_fn
                         .create_xlib_surface(&surface_desc, None)
                         .unwrap()
                 }
-                Some(RawWindowHandle::Wayland(handle)) => {
+                Some((RawWindowHandle::Wayland(window), RawDisplayHandle::Wayland(display))) => {
                     let surface_desc = vk::WaylandSurfaceCreateInfoKHR::builder()
-                        .display(handle.display)
-                        .surface(handle.surface);
+                        .display(display.display)
+                        .surface(window.surface);
                     let wayland_surface_fn = khr::WaylandSurface::new(&entry_fn, &instance);
                     wayland_surface_fn
                         .create_wayland_surface(&surface_desc, None)
@@ -200,7 +200,7 @@ impl VkBase {
                 .expect("Error creating device");
         }
 
-        let swapchain_fn = match window_handle.is_some() {
+        let swapchain_fn = match window_display_handle.is_some() {
             true => Some(khr::Swapchain::new(&instance, &device)),
             false => None,
         };
