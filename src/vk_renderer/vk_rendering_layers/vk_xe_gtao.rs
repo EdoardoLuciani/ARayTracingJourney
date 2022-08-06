@@ -128,7 +128,9 @@ pub struct VkXeGtao {
     ao_image_view: vk::ImageView,
     edges_image: ImageAllocation,
     edges_image_view: vk::ImageView,
+    #[cfg(debug_assertions)]
     debug_image: ImageAllocation,
+    #[cfg(debug_assertions)]
     debug_image_view: vk::ImageView,
     out_ao_image: ImageAllocation,
     out_ao_image_view: vk::ImageView,
@@ -233,7 +235,9 @@ impl VkXeGtao {
             ao_image_view: vk::ImageView::null(),
             edges_image: unsafe { std::mem::zeroed() },
             edges_image_view: vk::ImageView::null(),
+            #[cfg(debug_assertions)]
             debug_image: unsafe { std::mem::zeroed() },
+            #[cfg(debug_assertions)]
             debug_image_view: vk::ImageView::null(),
             out_ao_image: unsafe { std::mem::zeroed() },
             out_ao_image_view: vk::ImageView::null(),
@@ -306,6 +310,8 @@ impl VkXeGtao {
             &mut self.edges_image,
             &mut self.edges_image_view,
         );
+
+        #[cfg(debug_assertions)]
         Self::replace_output_image(
             &self.device,
             &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
@@ -315,6 +321,7 @@ impl VkXeGtao {
             &mut self.debug_image,
             &mut self.debug_image_view,
         );
+
         Self::replace_output_image(
             &self.device,
             &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
@@ -449,7 +456,7 @@ impl VkXeGtao {
             );
 
             // main pass
-            let image_memory_barriers = [
+            let mut image_memory_barriers = [
                 vk::ImageMemoryBarrier2::builder()
                     .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                     .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
@@ -514,6 +521,7 @@ impl VkXeGtao {
                         layer_count: vk::REMAINING_ARRAY_LAYERS,
                     })
                     .build(),
+                #[cfg(debug_assertions)]
                 vk::ImageMemoryBarrier2::builder()
                     .src_stage_mask(vk::PipelineStageFlags2::NONE)
                     .src_access_mask(vk::AccessFlags2::NONE)
@@ -657,18 +665,13 @@ impl VkXeGtao {
             .image_view(self.edges_image_view)
             .image_layout(vk::ImageLayout::GENERAL);
 
-        let main_pass_debug = vk::DescriptorImageInfo::builder()
-            .sampler(vk::Sampler::null())
-            .image_view(self.debug_image_view)
-            .image_layout(vk::ImageLayout::GENERAL);
-
         let mut write_descriptor_sets = vec![
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.shader_stages[0].descriptor_set.get_descriptor_sets()[0])
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&[prefilter_depths_input_image.build()])
+                .image_info(std::slice::from_ref(&prefilter_depths_input_image))
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.shader_stages[0].descriptor_set.get_descriptor_sets()[0])
@@ -682,37 +685,47 @@ impl VkXeGtao {
                 .dst_binding(0)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&[main_pass_prefilter_depth.build()])
+                .image_info(std::slice::from_ref(&main_pass_prefilter_depth))
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.shader_stages[1].descriptor_set.get_descriptor_sets()[0])
                 .dst_binding(1)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
-                .image_info(&[main_pass_normal.build()])
+                .image_info(std::slice::from_ref(&main_pass_normal))
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.shader_stages[1].descriptor_set.get_descriptor_sets()[0])
                 .dst_binding(2)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                .image_info(&[main_pass_ao.build()])
+                .image_info(std::slice::from_ref(&main_pass_ao))
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.shader_stages[1].descriptor_set.get_descriptor_sets()[0])
                 .dst_binding(3)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                .image_info(&[main_pass_edges.build()])
+                .image_info(std::slice::from_ref(&main_pass_edges))
                 .build(),
+        ];
+
+        #[cfg(debug_assertions)]
+        let main_pass_debug = vk::DescriptorImageInfo::builder()
+            .sampler(vk::Sampler::null())
+            .image_view(self.debug_image_view)
+            .image_layout(vk::ImageLayout::GENERAL);
+
+        #[cfg(debug_assertions)]
+        write_descriptor_sets.push(
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.shader_stages[1].descriptor_set.get_descriptor_sets()[0])
                 .dst_binding(4)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                .image_info(&[main_pass_debug.build()])
+                .image_info(std::slice::from_ref(&main_pass_debug))
                 .build(),
-        ];
+        );
 
         let mut denoise_image_view_src = self.ao_image_view;
         let mut denoise_image_view_dst = self.out_ao_image_view;
@@ -1220,11 +1233,13 @@ impl Drop for VkXeGtao {
                 .destroy_image(std::mem::replace(&mut self.edges_image, std::mem::zeroed()));
             self.device.destroy_image_view(self.edges_image_view, None);
 
+            #[cfg(debug_assertions)]
             self.allocator
                 .as_ref()
                 .borrow_mut()
                 .get_allocator_mut()
                 .destroy_image(std::mem::replace(&mut self.debug_image, std::mem::zeroed()));
+            #[cfg(debug_assertions)]
             self.device.destroy_image_view(self.debug_image_view, None);
 
             self.allocator
