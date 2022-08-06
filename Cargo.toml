@@ -19,7 +19,7 @@ rpath = false
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = false
 debug-assertions = false
 overflow-checks = false
 debug = false

@@ -102,6 +102,18 @@ impl VkLights {
             self.lights.copy_lights_shader_data(host_shader_data_slice);
 
             unsafe {
+                let buffer_memory_barrier = vk::BufferMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .buffer(self.device_suballocation.get_buffer())
+                    .offset(self.device_suballocation.get_buffer_offset() as u64)
+                    .size(self.device_suballocation.get_size() as u64);
+                let dependancy_info = vk::DependencyInfo::builder()
+                    .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier));
+                self.device.cmd_pipeline_barrier2(cb, &dependancy_info);
+
                 let copy_regions = vk::BufferCopy2::builder()
                     .src_offset(self.host_suballocation.get_buffer_offset() as u64)
                     .dst_offset(self.device_suballocation.get_buffer_offset() as u64)
