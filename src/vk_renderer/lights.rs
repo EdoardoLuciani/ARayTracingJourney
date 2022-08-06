@@ -86,10 +86,10 @@ trait LightShaderSerializable {
 }
 
 enum LightType {
-    POINT = 0,
-    SPOT = 1,
-    DIRECTIONAL = 2,
-    AREA = 3,
+    Point = 0,
+    Spot = 1,
+    Directional = 2,
+    Area = 3,
 }
 
 pub struct PointLight {
@@ -145,7 +145,7 @@ impl LightShaderSerializable for PointLight {
     fn get_light_shader_data(&self) -> LightShaderData {
         LightShaderData {
             pos: self.pos,
-            light_type: LightType::POINT as u32,
+            light_type: LightType::Point as u32,
             dir: Vector3::zeros(),
             casts_shadows: self.casts_shadows as u32,
             color: self.color,
@@ -229,7 +229,7 @@ impl LightShaderSerializable for SpotLight {
     fn get_light_shader_data(&self) -> LightShaderData {
         LightShaderData {
             pos: self.pos,
-            light_type: LightType::SPOT as u32,
+            light_type: LightType::Spot as u32,
             dir: self.dir,
             casts_shadows: self.casts_shadows as u32,
             color: self.color,
@@ -282,7 +282,7 @@ impl LightShaderSerializable for DirectionalLight {
     fn get_light_shader_data(&self) -> LightShaderData {
         LightShaderData {
             pos: Vector3::zeros(),
-            light_type: LightType::DIRECTIONAL as u32,
+            light_type: LightType::Directional as u32,
             dir: self.dir,
             casts_shadows: self.casts_shadows as u32,
             color: self.color,
@@ -389,7 +389,7 @@ impl LightShaderSerializable for AreaLight {
         plane_normal.normalize_mut();
         LightShaderData {
             pos: self.pos,
-            light_type: LightType::AREA as u32,
+            light_type: LightType::Area as u32,
             dir: plane_normal,
             casts_shadows: self.casts_shadows as u32,
             color: self.color,

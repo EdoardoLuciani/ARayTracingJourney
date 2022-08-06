@@ -226,9 +226,7 @@ impl VkTlasBuilder {
                 .size(vk::WHOLE_SIZE);
             let dependency_info = vk::DependencyInfo::builder()
                 .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
-            unsafe {
-                self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-            }
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
         self.tlas = as_build_info.dst_acceleration_structure;
         self.tlas

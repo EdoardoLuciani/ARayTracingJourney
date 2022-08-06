@@ -87,7 +87,7 @@ impl VkBase {
             application_name,
             instance_pnext,
             &instance_extensions,
-            &layer_names,
+            layer_names,
         );
 
         // Creation of an optional debug reporter

@@ -91,7 +91,7 @@ impl VkRTLightningShadows {
             device.as_ref(),
             init_cb,
             ray_tracing_pipeline_fp.as_ref(),
-            &ray_tracing_pipeline_properties,
+            ray_tracing_pipeline_properties,
             pipeline_data.1,
             allocator
                 .as_ref()

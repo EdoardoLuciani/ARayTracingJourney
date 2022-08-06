@@ -384,11 +384,11 @@ impl VkModel {
     }
 
     pub fn get_device_primitives_count(&self) -> Option<u32> {
-        if let Some(device_state) = self.state.as_ref()?.as_any().downcast_ref::<Device>() {
-            Some(device_state.device_primitives_info.len() as u32)
-        } else {
-            None
-        }
+        self.state
+            .as_ref()?
+            .as_any()
+            .downcast_ref::<Device>()
+            .map(|device_state| device_state.device_primitives_info.len() as u32)
     }
 
     pub fn get_blas_buffer(&self) -> Option<vk::Buffer> {
@@ -475,7 +475,7 @@ impl VkModel {
             std::ptr::copy_nonoverlapping(
                 &self.uniform,
                 host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr() as *mut VkModelUniform,
-                std::mem::size_of::<VkModelUniform>(),
+                1,
             );
 
             let buffer_copy_region = vk::BufferCopy2::builder()

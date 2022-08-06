@@ -210,7 +210,7 @@ impl VkRTDescriptorSet {
         };
         dst_slice.copy_from_slice(shader_primitive_infos.as_slice());
 
-        self.update_primitives_info_descriptor_set(&primitive_infos);
+        self.update_primitives_info_descriptor_set(primitive_infos);
 
         unsafe {
             let buffer_region = vk::BufferCopy2::builder()

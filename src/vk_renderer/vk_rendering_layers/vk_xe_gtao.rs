@@ -8,7 +8,7 @@ use gpu_allocator::MemoryLocation;
 use itertools::Itertools;
 use nalgebra::*;
 use std::cell::RefCell;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::rc::Rc;
 
 const XE_GTAO_DEPTH_MIP_LEVELS: u32 = 5;
@@ -69,7 +69,7 @@ impl Stage {
         group_count_y: u32,
     ) {
         let dependency_info =
-            vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
+            vk::DependencyInfo::builder().image_memory_barriers(image_memory_barriers);
         unsafe {
             device.cmd_pipeline_barrier2(cb, &dependency_info);
             device.cmd_bind_pipeline(cb, vk::PipelineBindPoint::COMPUTE, self.pipeline);
@@ -361,22 +361,22 @@ impl VkXeGtao {
         };
 
         constants.depth_unpack_consts = {
-            let depthLinearizeMul = (clip_far * clip_near) / (clip_far - clip_near);
+            let depth_linearize_mul = (clip_far * clip_near) / (clip_far - clip_near);
 
-            let mut depthLinearizeAdd = clip_far / (clip_far - clip_near);
+            let mut depth_linearize_add = clip_far / (clip_far - clip_near);
 
-            if depthLinearizeMul * depthLinearizeAdd < 0.0f32 {
-                depthLinearizeAdd = -depthLinearizeAdd;
+            if depth_linearize_mul * depth_linearize_add < 0.0f32 {
+                depth_linearize_add = -depth_linearize_add;
             }
-            Vector2::new(depthLinearizeMul, depthLinearizeAdd)
+            Vector2::new(depth_linearize_mul, depth_linearize_add)
         };
 
         let camera_tan_half_fov = {
-            let tanHalfFOVY = (fovy * 0.5f32).tan();
+            let tan_half_fovy = (fovy * 0.5f32).tan();
 
-            let tanHalfFOVX = tanHalfFOVY * aspect;
+            let tan_half_fovx = tan_half_fovy * aspect;
 
-            Vector2::new(tanHalfFOVX, tanHalfFOVY)
+            Vector2::new(tan_half_fovx, tan_half_fovy)
         };
 
         constants.camera_tan_half_fov = camera_tan_half_fov;
@@ -463,7 +463,7 @@ impl VkXeGtao {
             );
 
             // main pass
-            let mut image_memory_barriers = [
+            let image_memory_barriers = [
                 vk::ImageMemoryBarrier2::builder()
                     .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                     .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
@@ -947,17 +947,17 @@ impl VkXeGtao {
                     .build(),
             ];
             let descriptor_set_layout =
-                Self::create_descriptor_set_layout(&device, &layout_bindings);
+                Self::create_descriptor_set_layout(device, &layout_bindings);
             let descriptor_set =
                 descriptor_set_allocator.allocate_descriptor_sets(&[descriptor_set_layout]);
 
             let mut descriptor_set_layouts = Vec::<vk::DescriptorSetLayout>::new();
             descriptor_set_layouts.push(descriptor_set_layout);
             descriptor_set_layouts.extend_from_slice(additional_global_set_layouts);
-            let pipeline_layout = Self::create_pipeline_layout(&device, &descriptor_set_layouts);
+            let pipeline_layout = Self::create_pipeline_layout(device, &descriptor_set_layouts);
 
             let pipeline = Self::create_compute_pipeline(
-                &device,
+                device,
                 format!(
                     "{}//{}",
                     shaders_spirv_location.to_str().unwrap(),
@@ -1012,14 +1012,14 @@ impl VkXeGtao {
                     .build(),
             ];
             let descriptor_set_layout =
-                Self::create_descriptor_set_layout(&device, &layout_bindings);
+                Self::create_descriptor_set_layout(device, &layout_bindings);
             let descriptor_set =
                 descriptor_set_allocator.allocate_descriptor_sets(&[descriptor_set_layout]);
 
             let mut descriptor_set_layouts = Vec::<vk::DescriptorSetLayout>::new();
             descriptor_set_layouts.push(descriptor_set_layout);
             descriptor_set_layouts.extend_from_slice(additional_global_set_layouts);
-            let pipeline_layout = Self::create_pipeline_layout(&device, &descriptor_set_layouts);
+            let pipeline_layout = Self::create_pipeline_layout(device, &descriptor_set_layouts);
 
             let entries = [
                 vk::SpecializationMapEntry {
@@ -1043,7 +1043,7 @@ impl VkXeGtao {
                 .data(&binary_data);
 
             let pipeline = Self::create_compute_pipeline(
-                &device,
+                device,
                 format!(
                     "{}//{}",
                     shaders_spirv_location.to_str().unwrap(),
@@ -1085,17 +1085,16 @@ impl VkXeGtao {
                 .build(),
         ];
         let denoise_descriptor_set_layout =
-            Self::create_descriptor_set_layout(&device, &denoise_layout_bindings);
+            Self::create_descriptor_set_layout(device, &denoise_layout_bindings);
 
         let mut descriptor_set_layouts = Vec::<vk::DescriptorSetLayout>::new();
         descriptor_set_layouts.push(denoise_descriptor_set_layout);
         descriptor_set_layouts.extend_from_slice(additional_global_set_layouts);
-        let denoise_pipeline_layout =
-            Self::create_pipeline_layout(&device, &descriptor_set_layouts);
+        let denoise_pipeline_layout = Self::create_pipeline_layout(device, &descriptor_set_layouts);
 
         if settings.denoise as u8 > 1 {
             let denoise_pipeline = Self::create_compute_pipeline(
-                &device,
+                device,
                 format!(
                     "{}//{}",
                     shaders_spirv_location.to_str().unwrap(),
@@ -1117,7 +1116,7 @@ impl VkXeGtao {
         }
 
         let denoise_last_pipeline = Self::create_compute_pipeline(
-            &device,
+            device,
             format!(
                 "{}//{}",
                 shaders_spirv_location.to_str().unwrap(),
@@ -1170,7 +1169,7 @@ impl VkXeGtao {
         cs_shader_spec_info: *const vk::SpecializationInfo,
         pipeline_layout: vk::PipelineLayout,
     ) -> vk::Pipeline {
-        let mut shader_stage = vk_create_shader_stage(shader_spirv_file, &device);
+        let mut shader_stage = vk_create_shader_stage(shader_spirv_file, device);
         shader_stage.p_specialization_info = cs_shader_spec_info;
 
         let compute_pipelines_ci = vk::ComputePipelineCreateInfo::builder()

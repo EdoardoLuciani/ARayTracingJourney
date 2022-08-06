@@ -2,7 +2,7 @@ use super::model_reader::*;
 use ash::vk::Format;
 use gltf::Semantic;
 use nalgebra::*;
-use std::cmp::Ordering;
+
 use std::collections::HashMap;
 use std::ops::DivAssign;
 use std::path::Path;
@@ -402,7 +402,7 @@ impl ModelReader for GltfModelReader {
 impl GltfModelReader {
     fn get_mesh_attribute_from_accessor(accessor: gltf::Accessor) -> GltfPrimitiveMeshAttribute {
         let buffer_view = accessor.view().unwrap();
-        let element_stride = buffer_view.stride().unwrap_or(accessor.size());
+        let element_stride = buffer_view.stride().unwrap_or_else(|| accessor.size());
         GltfPrimitiveMeshAttribute {
             buffer_data_start: (accessor.offset() + buffer_view.offset()) as u64,
             buffer_data_len: (accessor.count() * element_stride) as u64,
@@ -432,9 +432,8 @@ impl GltfModelReader {
                         let position = *(elem.as_ptr() as *const Vector3<f32>);
                         let magnitude = position.magnitude();
 
-                        match magnitude.partial_cmp(&max_magnitude) {
-                            Some(Ordering::Greater) => max_magnitude = magnitude,
-                            _ => {}
+                        if magnitude > max_magnitude {
+                            max_magnitude = magnitude;
                         }
                     })
             });

@@ -1,4 +1,3 @@
-use hassle_rs;
 use hassle_rs::HassleError;
 use shaderc::{IncludeType, ResolvedInclude};
 use std::ffi::OsStr;
@@ -63,7 +62,7 @@ impl ShaderCompiler {
             .unwrap()
             .set_target_spirv(shaderc::SpirvVersion::V1_5);
         compiler_options.as_mut().unwrap().set_include_callback(
-            |requested_source, include_type, requestee_source, include_depth| {
+            |requested_source, include_type, requestee_source, _| {
                 let requested_source_path = match include_type {
                     IncludeType::Relative => {
                         let mut requested_source_path = PathBuf::from(requestee_source);
@@ -107,7 +106,7 @@ impl ShaderCompiler {
                     .to_str()
                     .unwrap()
                     .to_string();
-                new_shader_name = new_shader_name.rsplit_once(".").unwrap().0.to_string();
+                new_shader_name = new_shader_name.rsplit_once('.').unwrap().0.to_string();
                 new_shader_name.push_str(".spirv");
                 Self::save_file(shader_spirv_destination, &new_shader_name, v.as_binary_u8());
                 false
@@ -141,9 +140,9 @@ impl ShaderCompiler {
             shader_source.to_str().unwrap(),
             &shader_contents,
             "main",
-            &target_profile,
-            &vec!["-spirv"],
-            &vec![],
+            target_profile,
+            &["-spirv"],
+            &[],
         );
 
         return match compilation_result {
@@ -158,7 +157,7 @@ impl ShaderCompiler {
                     .to_str()
                     .unwrap()
                     .to_string();
-                new_shader_name = new_shader_name.rsplit_once(".").unwrap().0.to_string();
+                new_shader_name = new_shader_name.rsplit_once('.').unwrap().0.to_string();
                 new_shader_name.push_str(".spirv");
                 Self::save_file(shader_spirv_destination, &new_shader_name, &v);
                 false

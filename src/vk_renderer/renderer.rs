@@ -203,7 +203,7 @@ impl VulkanTempleRayTracedRenderer {
         let allocator = Rc::new(RefCell::new(VkAllocator::new(
             bvk.get_instance().clone(),
             device.clone(),
-            bvk.get_physical_device().clone(),
+            bvk.get_physical_device(),
         )));
 
         let tlas_builder = Rc::new(VkBlasBuilder::new(
