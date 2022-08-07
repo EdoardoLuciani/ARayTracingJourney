@@ -200,7 +200,7 @@ void main() {
     xyY.z = Tonemap_Uchimura(xyY.z);
     out_color = rgb_to_srgb_approx(xyY_to_rgb(xyY));
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 1.0));
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 1.0));
     imageStore(depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_depth));
     imageStore(normal_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 1.0));
 }

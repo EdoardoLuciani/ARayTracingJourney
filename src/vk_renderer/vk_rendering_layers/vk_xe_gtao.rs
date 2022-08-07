@@ -401,15 +401,15 @@ impl VkXeGtao {
 
     pub fn output_ao_image(&self) -> vk::Image {
         match self.gtao_settings.denoise as u8 {
-            2 => self.out_ao_image.get_image(),
-            _ => self.ao_image.get_image(),
+            2 => self.ao_image.get_image(),
+            _ => self.out_ao_image.get_image(),
         }
     }
 
     pub fn output_ao_image_view(&self) -> vk::ImageView {
         match self.gtao_settings.denoise as u8 {
-            2 => self.out_ao_image_view,
-            _ => self.ao_image_view,
+            2 => self.ao_image_view,
+            _ => self.out_ao_image_view,
         }
     }
 
