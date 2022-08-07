@@ -406,6 +406,13 @@ impl VkXeGtao {
         }
     }
 
+    pub fn output_ao_image_view(&self) -> vk::ImageView {
+        match self.gtao_settings.denoise as u8 {
+            2 => self.out_ao_image_view,
+            _ => self.ao_image_view,
+        }
+    }
+
     pub fn compute_ao(&mut self, cb: vk::CommandBuffer) {
         let constants = unsafe {
             &mut *(self
