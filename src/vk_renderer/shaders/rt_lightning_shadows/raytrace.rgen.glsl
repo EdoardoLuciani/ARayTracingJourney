@@ -9,8 +9,6 @@
 
 #include "ray_payload.glsl"
 #include "../brdfs.glsl"
-#include "../color_spaces.glsl"
-#include "../tonemaps.glsl"
 #include "light.glsl"
 
 layout(binding = 0, set = 0, rgba32f) uniform image2D image;
@@ -195,10 +193,6 @@ void main() {
         out_normal.yz = -out_normal.yz;
         out_normal = normalize(out_normal) * 0.5 + 0.5;
     }
-
-    vec3 xyY = rgb_to_xyY(out_color);
-    xyY.z = Tonemap_Uchimura(xyY.z);
-    out_color = rgb_to_srgb_approx(xyY_to_rgb(xyY));
 
     imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 1.0));
     imageStore(depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_depth));
