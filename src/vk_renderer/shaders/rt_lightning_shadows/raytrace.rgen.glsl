@@ -104,7 +104,7 @@ void main() {
 
     float out_depth = 10000.0;
     vec3 out_color = vec3(0.0);
-    vec3 out_normal = vec3(0.0);
+    vec3 out_normal = vec3(0.5);
     if (hit_payload.primitive_info_idx >= 0) {
         PrimitiveInfo primitive_info = primitive_infos[hit_payload.primitive_info_idx];
 
@@ -191,9 +191,9 @@ void main() {
         vec4 ndc_pos = view * vec4(world_pos, 1.0f);
         out_depth = -ndc_pos.z;
 
-        out_normal = normalize(mat3(transpose(view_inv)) * N);
-        out_normal.z = -out_normal.z;
-        out_normal = out_normal * 0.5 + 0.5;
+        out_normal = mat3(transpose(view_inv)) * N;
+        out_normal.yz = -out_normal.yz;
+        out_normal = normalize(out_normal) * 0.5 + 0.5;
     }
 
     vec3 xyY = rgb_to_xyY(out_color);

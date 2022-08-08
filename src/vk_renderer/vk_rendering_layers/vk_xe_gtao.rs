@@ -258,7 +258,7 @@ impl VkXeGtao {
                 as *mut GTAOConstants)
         };
 
-        constants.effect_radius = XE_GTAO_RADIUS;
+        constants.effect_radius = 0.2f32;
         constants.effect_falloff_range = XE_GTAO_DEFAULT_FALLOFF_RANGE;
         constants.radius_multiplier = XE_GTAO_DEFAULT_RADIUS_MULTIPLIER;
         constants.sample_distribution_power = XE_GTAO_DEFAULT_SAMPLE_DISTRIBUTION_POWER;
