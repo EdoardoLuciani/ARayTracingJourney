@@ -11,6 +11,7 @@ My ultimate goal is to write the successor of my first renderer [TheVulkanTemple
 - Ray traced primitive exclusion
 - Ray traced shadows
 - Point, spot, directional and area lights
+- XeGTAO ambient occlusion (https://github.com/GameTechDev/XeGTAO)
 - High dynamic range with final tonemapping
 - GLTF models as inputs
 

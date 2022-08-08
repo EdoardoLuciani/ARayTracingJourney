@@ -11,6 +11,8 @@ use std::path::Path;
 use std::rc::Rc;
 
 const DESCRIPTOR_SET_IMAGE_BINDING: u32 = 0;
+const DESCRIPTOR_SET_DEPTH_IMAGE_BINDING: u32 = 1;
+const DESCRIPTOR_SET_NORMAL_IMAGE_BINDING: u32 = 2;
 
 pub struct VkRTLightningShadows {
     device: Rc<ash::Device>,
@@ -21,6 +23,10 @@ pub struct VkRTLightningShadows {
     descriptor_set_allocation: DescriptorSetAllocation,
     output_image: ImageAllocation,
     output_image_view: vk::ImageView,
+    output_depth_image: ImageAllocation,
+    output_depth_image_view: vk::ImageView,
+    output_normal_image: ImageAllocation,
+    output_normal_image_view: vk::ImageView,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     sbt_buffer: BufferAllocation,
@@ -40,12 +46,26 @@ impl VkRTLightningShadows {
         init_cb: vk::CommandBuffer,
     ) -> Self {
         let descriptor_set_layout_image = unsafe {
-            let descriptor_set_bindings = [vk::DescriptorSetLayoutBinding::builder()
-                .binding(DESCRIPTOR_SET_IMAGE_BINDING)
-                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                .descriptor_count(1)
-                .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
-                .build()];
+            let descriptor_set_bindings = [
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(DESCRIPTOR_SET_IMAGE_BINDING)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
+                    .build(),
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(DESCRIPTOR_SET_DEPTH_IMAGE_BINDING)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
+                    .build(),
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(DESCRIPTOR_SET_NORMAL_IMAGE_BINDING)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
+                    .build(),
+            ];
             let descriptor_set_layout_ci =
                 vk::DescriptorSetLayoutCreateInfo::builder().bindings(&descriptor_set_bindings);
             device
@@ -57,17 +77,6 @@ impl VkRTLightningShadows {
             .borrow_mut()
             .get_descriptor_set_allocator_mut()
             .allocate_descriptor_sets(&[descriptor_set_layout_image]);
-
-        let image_data = Self::create_output_image(
-            device.as_ref(),
-            allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .deref_mut(),
-            rendering_resolution,
-            output_format,
-        );
 
         let mut descriptor_set_layouts = vec![descriptor_set_layout_image; 1];
         descriptor_set_layouts.extend_from_slice(additional_descriptor_set_layouts);
@@ -82,7 +91,7 @@ impl VkRTLightningShadows {
             device.as_ref(),
             init_cb,
             ray_tracing_pipeline_fp.as_ref(),
-            &ray_tracing_pipeline_properties,
+            ray_tracing_pipeline_properties,
             pipeline_data.1,
             allocator
                 .as_ref()
@@ -91,51 +100,86 @@ impl VkRTLightningShadows {
                 .deref_mut(),
         );
 
-        let vk_ray_traced_lightning_shadows = VkRTLightningShadows {
+        let mut vk_ray_traced_lightning_shadows = VkRTLightningShadows {
             device,
             ray_tracing_pipeline_fp,
             allocator,
             rendering_resolution,
             descriptor_set_layout: descriptor_set_layout_image,
             descriptor_set_allocation,
-            output_image: image_data.0,
-            output_image_view: image_data.1,
+            output_image: unsafe { std::mem::zeroed() },
+            output_image_view: vk::ImageView::null(),
+            output_depth_image: unsafe { std::mem::zeroed() },
+            output_depth_image_view: vk::ImageView::null(),
+            output_normal_image: unsafe { std::mem::zeroed() },
+            output_normal_image_view: vk::ImageView::null(),
             pipeline_layout: pipeline_data.0,
             pipeline: pipeline_data.1,
             sbt_buffer: sbt_data.0,
             sbt_regions: sbt_data.1,
         };
-        vk_ray_traced_lightning_shadows.update_output_image_descriptor_set();
+        vk_ray_traced_lightning_shadows.resize(rendering_resolution, output_format);
         vk_ray_traced_lightning_shadows
     }
 
     pub fn resize(&mut self, rendering_resolution: vk::Extent2D, output_image_format: vk::Format) {
         self.rendering_resolution = rendering_resolution;
 
-        unsafe {
-            self.device.destroy_image_view(self.output_image_view, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(&mut self.output_image, unsafe {
-                    std::mem::zeroed()
-                }));
-        }
-
-        let (image, image_view) = Self::create_output_image(
+        Self::replace_output_image(
             &self.device,
             &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
             rendering_resolution,
             output_image_format,
+            vk::ImageUsageFlags::STORAGE,
+            &mut self.output_image,
+            &mut self.output_image_view,
         );
-        self.output_image = image;
-        self.output_image_view = image_view;
-        self.update_output_image_descriptor_set();
+
+        Self::replace_output_image(
+            &self.device,
+            &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
+            rendering_resolution,
+            vk::Format::R16_SFLOAT,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            &mut self.output_depth_image,
+            &mut self.output_depth_image_view,
+        );
+
+        Self::replace_output_image(
+            &self.device,
+            &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
+            rendering_resolution,
+            vk::Format::B10G11R11_UFLOAT_PACK32,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            &mut self.output_normal_image,
+            &mut self.output_normal_image_view,
+        );
+
+        self.update_output_images_descriptor_set();
     }
 
-    pub fn get_output_image(&self) -> vk::Image {
+    pub fn get_color_output_image(&self) -> vk::Image {
         self.output_image.get_image()
+    }
+
+    pub fn get_color_output_image_view(&self) -> vk::ImageView {
+        self.output_image_view
+    }
+
+    pub fn get_output_depth_image(&self) -> vk::Image {
+        self.output_depth_image.get_image()
+    }
+
+    pub fn get_output_depth_image_view(&self) -> vk::ImageView {
+        self.output_depth_image_view
+    }
+
+    pub fn get_output_normal_image(&self) -> vk::Image {
+        self.output_normal_image.get_image()
+    }
+
+    pub fn get_output_normal_image_view(&self) -> vk::ImageView {
+        self.output_normal_image_view
     }
 
     pub fn trace_rays(
@@ -144,24 +188,58 @@ impl VkRTLightningShadows {
         additional_descriptor_sets: &[vk::DescriptorSet],
     ) {
         unsafe {
-            let image_memory_barrier = vk::ImageMemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::NONE)
-                .src_access_mask(vk::AccessFlags2::NONE)
-                .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
-                .old_layout(vk::ImageLayout::UNDEFINED)
-                .new_layout(vk::ImageLayout::GENERAL)
-                .image(self.output_image.get_image())
-                .subresource_range(vk::ImageSubresourceRange {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    base_mip_level: 0,
-                    level_count: 1,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .build();
-            let dependency_info = vk::DependencyInfo::builder()
-                .image_memory_barriers(std::slice::from_ref(&image_memory_barrier));
+            let image_memory_barriers = [
+                vk::ImageMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .image(self.output_image.get_image())
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .build(),
+                vk::ImageMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .image(self.output_depth_image.get_image())
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .build(),
+                vk::ImageMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .image(self.output_normal_image.get_image())
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .build(),
+            ];
+            let dependency_info =
+                vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
 
             self.device.cmd_bind_pipeline(
@@ -199,47 +277,83 @@ impl VkRTLightningShadows {
         }
     }
 
-    fn update_output_image_descriptor_set(&self) {
+    fn update_output_images_descriptor_set(&self) {
         let image_info = vk::DescriptorImageInfo::builder()
             .sampler(vk::Sampler::null())
             .image_view(self.output_image_view)
             .image_layout(vk::ImageLayout::GENERAL);
-        let descriptor_set_write = vk::WriteDescriptorSet::builder()
-            .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
-            .dst_binding(DESCRIPTOR_SET_IMAGE_BINDING)
-            .dst_array_element(0)
-            .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-            .image_info(std::slice::from_ref(&image_info));
+        let depth_image_info = vk::DescriptorImageInfo::builder()
+            .sampler(vk::Sampler::null())
+            .image_view(self.output_depth_image_view)
+            .image_layout(vk::ImageLayout::GENERAL);
+        let normal_image_info = vk::DescriptorImageInfo::builder()
+            .sampler(vk::Sampler::null())
+            .image_view(self.output_normal_image_view)
+            .image_layout(vk::ImageLayout::GENERAL);
+
+        let descriptor_set_writes = [
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
+                .dst_binding(DESCRIPTOR_SET_IMAGE_BINDING)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .image_info(std::slice::from_ref(&image_info))
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
+                .dst_binding(DESCRIPTOR_SET_DEPTH_IMAGE_BINDING)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .image_info(std::slice::from_ref(&depth_image_info))
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
+                .dst_binding(DESCRIPTOR_SET_NORMAL_IMAGE_BINDING)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .image_info(std::slice::from_ref(&normal_image_info))
+                .build(),
+        ];
         unsafe {
             self.device
-                .update_descriptor_sets(std::slice::from_ref(&descriptor_set_write), &[]);
+                .update_descriptor_sets(&descriptor_set_writes, &[]);
         }
     }
 
-    fn create_output_image(
+    fn replace_output_image(
         device: &ash::Device,
         allocator: &mut VkMemoryResourceAllocator,
         resolution: vk::Extent2D,
         format: vk::Format,
-    ) -> (ImageAllocation, vk::ImageView) {
-        let image_ci = vk::ImageCreateInfo::builder()
-            .image_type(vk::ImageType::TYPE_2D)
-            .format(format)
-            .extent(vk::Extent3D {
-                width: resolution.width,
-                height: resolution.height,
-                depth: 1,
-            })
-            .mip_levels(1)
-            .array_layers(1)
-            .samples(vk::SampleCountFlags::TYPE_1)
-            .tiling(vk::ImageTiling::OPTIMAL)
-            .usage(vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC)
-            .initial_layout(vk::ImageLayout::UNDEFINED);
-        let image_allocation = allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly);
+        usage: vk::ImageUsageFlags,
+        image: &mut ImageAllocation,
+        image_view: &mut vk::ImageView,
+    ) {
+        unsafe {
+            device.destroy_image_view(*image_view, None);
+        }
+        take_mut::take(image, |image| {
+            allocator.destroy_image(image);
+
+            let image_ci = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(format)
+                .extent(vk::Extent3D {
+                    width: resolution.width,
+                    height: resolution.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(usage)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            allocator.allocate_image(&image_ci, MemoryLocation::GpuOnly)
+        });
 
         let image_view_ci = vk::ImageViewCreateInfo::builder()
-            .image(image_allocation.get_image())
+            .image(image.get_image())
             .view_type(vk::ImageViewType::TYPE_2D)
             .format(format)
             .components(vk::ComponentMapping::default())
@@ -252,8 +366,7 @@ impl VkRTLightningShadows {
                     .layer_count(1)
                     .build(),
             );
-        let image_view = unsafe { device.create_image_view(&image_view_ci, None).unwrap() };
-        (image_allocation, image_view)
+        *image_view = unsafe { device.create_image_view(&image_view_ci, None).unwrap() };
     }
 
     fn create_ray_tracing_pipeline(
@@ -264,27 +377,19 @@ impl VkRTLightningShadows {
     ) -> (vk::PipelineLayout, vk::Pipeline) {
         let shader_stages = [
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "raytrace.rgen.spirv"]
-                    .iter()
-                    .collect::<std::path::PathBuf>(),
+                format!("{}//{}", path.to_str().unwrap(), "raytrace.rgen.spirv"),
                 device,
             ),
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "raytrace.rmiss.spirv"]
-                    .iter()
-                    .collect::<std::path::PathBuf>(),
+                format!("{}//{}", path.to_str().unwrap(), "raytrace.rmiss.spirv"),
                 device,
             ),
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "shadow.rmiss.spirv"]
-                    .iter()
-                    .collect::<std::path::PathBuf>(),
+                format!("{}//{}", path.to_str().unwrap(), "shadow.rmiss.spirv"),
                 device,
             ),
             vk_create_shader_stage(
-                [path.to_str().unwrap(), "raytrace.rchit.spirv"]
-                    .iter()
-                    .collect::<std::path::PathBuf>(),
+                format!("{}//{}", path.to_str().unwrap(), "raytrace.rchit.spirv"),
                 device,
             ),
         ];
@@ -442,30 +547,39 @@ impl Drop for VkRTLightningShadows {
         unsafe {
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_descriptor_set_allocator_mut()
+
+            let mut al = self.allocator.as_ref().borrow_mut();
+
+            al.get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
                     DescriptorSetAllocation::null(),
                 ));
+
             self.device.destroy_image_view(self.output_image_view, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
-                .destroy_image(std::mem::replace(
-                    &mut self.output_image,
-                    std::mem::zeroed(),
-                ));
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_image,
+                std::mem::zeroed(),
+            ));
+
+            self.device
+                .destroy_image_view(self.output_normal_image_view, None);
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_normal_image,
+                std::mem::zeroed(),
+            ));
+
+            self.device
+                .destroy_image_view(self.output_depth_image_view, None);
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_depth_image,
+                std::mem::zeroed(),
+            ));
+
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
             self.device.destroy_pipeline(self.pipeline, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_allocator_mut()
+            al.get_allocator_mut()
                 .destroy_buffer(std::mem::replace(&mut self.sbt_buffer, std::mem::zeroed()));
         }
     }

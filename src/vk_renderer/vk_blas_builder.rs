@@ -98,7 +98,7 @@ impl VkBlasBuilder {
             .ty(vk::AccelerationStructureTypeKHR::BOTTOM_LEVEL)
             .flags(as_flags)
             .mode(vk::BuildAccelerationStructureModeKHR::BUILD)
-            .geometries(&as_geom_infos)
+            .geometries(as_geom_infos)
             .build();
 
         let as_size_info = unsafe {
@@ -156,7 +156,7 @@ impl VkBlasBuilder {
                 .cmd_build_acceleration_structures(
                     cb,
                     std::slice::from_ref(&as_build_info),
-                    &[&as_build_ranges],
+                    &[as_build_ranges],
                 );
         };
 

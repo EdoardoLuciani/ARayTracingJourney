@@ -3,7 +3,7 @@ pub mod vk_descriptor_sets_allocator;
 pub mod vk_memory_resource_allocator;
 
 use ash::vk;
-use gpu_allocator::{vulkan as vkalloc, MemoryLocation};
+use gpu_allocator::MemoryLocation;
 use std::cell::RefCell;
 use std::rc::Rc;
 use vk_buffers_suballocator::VkBuffersSubAllocator;
@@ -54,7 +54,7 @@ impl VkAllocator {
             descriptor_count: 10,
         }];
         let descriptor_sets_allocator = VkDescriptorSetsAllocator::new(
-            device.clone(),
+            device,
             vk::DescriptorPoolCreateFlags::UPDATE_AFTER_BIND,
             1000,
             descriptor_pool_sizes,

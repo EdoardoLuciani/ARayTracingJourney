@@ -4,8 +4,6 @@ use crate::vk_renderer::lights::LightShaderData;
 use crate::vk_renderer::vk_allocator::vk_buffers_suballocator::SubAllocationData;
 use crate::vk_renderer::vk_allocator::vk_descriptor_sets_allocator::DescriptorSetAllocation;
 use ash::vk;
-use itertools::all;
-use std::borrow::BorrowMut;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -102,6 +100,18 @@ impl VkLights {
             self.lights.copy_lights_shader_data(host_shader_data_slice);
 
             unsafe {
+                let buffer_memory_barrier = vk::BufferMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::COPY)
+                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                    .buffer(self.device_suballocation.get_buffer())
+                    .offset(self.device_suballocation.get_buffer_offset() as u64)
+                    .size(self.device_suballocation.get_size() as u64);
+                let dependancy_info = vk::DependencyInfo::builder()
+                    .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier));
+                self.device.cmd_pipeline_barrier2(cb, &dependancy_info);
+
                 let copy_regions = vk::BufferCopy2::builder()
                     .src_offset(self.host_suballocation.get_buffer_offset() as u64)
                     .dst_offset(self.device_suballocation.get_buffer_offset() as u64)
@@ -129,33 +139,17 @@ impl VkLights {
     }
 
     fn recreate_buffers(&mut self, new_size: usize) {
-        self.allocator
-            .as_ref()
-            .borrow_mut()
-            .get_host_uniform_sub_allocator_mut()
-            .free(std::mem::replace(&mut self.host_suballocation, unsafe {
-                std::mem::zeroed()
-            }));
-        self.allocator
-            .as_ref()
-            .borrow_mut()
-            .get_device_uniform_sub_allocator_mut()
-            .free(std::mem::replace(&mut self.device_suballocation, unsafe {
-                std::mem::zeroed()
-            }));
-
-        self.host_suballocation = self
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_host_uniform_sub_allocator_mut()
-            .allocate(new_size, 128);
-        self.device_suballocation = self
-            .allocator
-            .as_ref()
-            .borrow_mut()
-            .get_device_uniform_sub_allocator_mut()
-            .allocate(new_size, 128);
+        let mut al = self.allocator.as_ref().borrow_mut();
+        take_mut::take(&mut self.host_suballocation, |allocation| {
+            al.get_host_uniform_sub_allocator_mut().free(allocation);
+            al.get_host_uniform_sub_allocator_mut()
+                .allocate(new_size, 128)
+        });
+        take_mut::take(&mut self.device_suballocation, |allocation| {
+            al.get_device_uniform_sub_allocator_mut().free(allocation);
+            al.get_device_uniform_sub_allocator_mut()
+                .allocate(new_size, 128)
+        });
     }
 
     fn update_descriptor_set(&self, lights_byte_size: u64) {
@@ -181,26 +175,20 @@ impl Drop for VkLights {
         unsafe {
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
+
+            let mut al = self.allocator.as_ref().borrow_mut();
+
+            al.get_host_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.host_suballocation,
                     std::mem::zeroed(),
                 ));
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
+            al.get_device_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.device_suballocation,
                     std::mem::zeroed(),
                 ));
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_descriptor_set_allocator_mut()
+            al.get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
                     DescriptorSetAllocation::null(),

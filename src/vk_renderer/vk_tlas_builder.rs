@@ -209,7 +209,24 @@ impl VkTlasBuilder {
                     cb,
                     std::slice::from_ref(&as_build_info),
                     &[std::slice::from_ref(&as_range_info)],
+                );
+
+            let buffer_memory_barrier2 = vk::BufferMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                .dst_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_READ_KHR)
+                .buffer(
+                    self.device_as_instance_struct_buffer
+                        .as_ref()
+                        .unwrap()
+                        .get_buffer(),
                 )
+                .offset(0)
+                .size(vk::WHOLE_SIZE);
+            let dependency_info = vk::DependencyInfo::builder()
+                .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier2));
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
         self.tlas = as_build_info.dst_acceleration_structure;
         self.tlas

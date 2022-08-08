@@ -1,4 +1,6 @@
-use raw_window_handle::{HasRawWindowHandle, RawWindowHandle};
+use raw_window_handle::{
+    HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
+};
 use winit::dpi::LogicalSize;
 use winit::event_loop::EventLoop;
 use winit::window::Fullscreen;
@@ -25,5 +27,9 @@ impl WindowManager {
 
     pub fn get_window_handle(&self) -> RawWindowHandle {
         self.window.raw_window_handle()
+    }
+
+    pub fn get_display_handle(&self) -> RawDisplayHandle {
+        self.window.raw_display_handle()
     }
 }

@@ -1,15 +1,14 @@
 use std::any::Any;
 use std::boxed::Box;
 use std::cell::RefCell;
-use std::collections::VecDeque;
 use std::iter::zip;
 use std::path::PathBuf;
 use std::rc::Rc;
 
 use super::vk_blas_builder::VkBlasBuilder;
 use crate::vk_renderer::vk_blas_builder::Blas;
+use ash::vk;
 use ash::vk::CommandBuffer;
-use ash::{extensions::*, vk};
 use gpu_allocator::MemoryLocation;
 use nalgebra::*;
 
@@ -73,12 +72,11 @@ impl VkModelTransferLocation for Host {
     }
 
     fn to_device(self: Box<Host>, vk_model: &mut VkModel, cb: vk::CommandBuffer) {
-        let (device_mesh_indices_buffer, mut primitives_info) = vk_model
-            .transfer_from_host_to_device(
-                cb,
-                self.host_buffer_allocation,
-                self.host_model_copy_info,
-            );
+        let (device_mesh_indices_buffer, primitives_info) = vk_model.transfer_from_host_to_device(
+            cb,
+            self.host_buffer_allocation,
+            self.host_model_copy_info,
+        );
 
         let host_uniform_sub_allocation = vk_model
             .allocator
@@ -358,7 +356,8 @@ impl VkModel {
     }
 
     pub fn get_transform_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let row_matrix = self.uniform.model_matrix.transpose();
+        let m_matrix = self.uniform.model_matrix;
+        let row_matrix = m_matrix.transpose();
         let matrix: [f32; 12] = row_matrix.data.as_slice().try_into().unwrap();
         vk::TransformMatrixKHR { matrix }
     }
@@ -385,11 +384,11 @@ impl VkModel {
     }
 
     pub fn get_device_primitives_count(&self) -> Option<u32> {
-        if let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()? {
-            Some(device_state.device_primitives_info.len() as u32)
-        } else {
-            None
-        }
+        self.state
+            .as_ref()?
+            .as_any()
+            .downcast_ref::<Device>()
+            .map(|device_state| device_state.device_primitives_info.len() as u32)
     }
 
     pub fn get_blas_buffer(&self) -> Option<vk::Buffer> {
@@ -476,7 +475,7 @@ impl VkModel {
             std::ptr::copy_nonoverlapping(
                 &self.uniform,
                 host_uniform_sub_allocation.get_host_ptr().unwrap().as_ptr() as *mut VkModelUniform,
-                std::mem::size_of::<VkModelUniform>(),
+                1,
             );
 
             let buffer_copy_region = vk::BufferCopy2::builder()
@@ -968,6 +967,21 @@ impl VkModel {
                 &as_build_ranges,
                 vk::BuildAccelerationStructureFlagsKHR::PREFER_FAST_TRACE,
             );
+
+        unsafe {
+            let buffer_memory_barrier = vk::BufferMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .src_access_mask(vk::AccessFlags2::ACCELERATION_STRUCTURE_WRITE_KHR)
+                .dst_stage_mask(vk::PipelineStageFlags2::ACCELERATION_STRUCTURE_BUILD_KHR)
+                .dst_access_mask(vk::AccessFlags2::SHADER_READ)
+                .buffer(blas.get_blas_allocation().get_buffer())
+                .offset(0)
+                .size(vk::WHOLE_SIZE)
+                .build();
+            let dependency_info = vk::DependencyInfo::builder()
+                .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barrier));
+            self.device.cmd_pipeline_barrier2(cb, &dependency_info);
+        }
 
         self.needs_cb_submit = true;
         self.post_cb_submit_cleanups.push(Box::new(BlasBuild {

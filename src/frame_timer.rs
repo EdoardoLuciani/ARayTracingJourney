@@ -15,11 +15,11 @@ impl FrameTimer {
 
     pub fn frame_end(&mut self) {
         self.rendered_frames += 1;
-        let delta_time = self.time_start.elapsed().as_millis();
-        if delta_time > 1000 {
+        let delta_time = self.time_start.elapsed();
+        if delta_time.as_millis() > 1000 {
             println!(
-                "Msec/frame: {}, FPS: {}",
-                delta_time / self.rendered_frames as u128,
+                "Msec/frame: {:.3}, FPS: {}",
+                delta_time.as_secs_f32() * 1000f32 / self.rendered_frames as f32,
                 self.rendered_frames
             );
             self.time_start = Instant::now();

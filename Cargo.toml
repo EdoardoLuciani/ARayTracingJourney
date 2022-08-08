@@ -19,7 +19,7 @@ rpath = false
 
 [profile.release]
 opt-level = 3
-lto = true
+lto = false
 debug-assertions = false
 overflow-checks = false
 debug = false
@@ -32,17 +32,19 @@ rpath = false
 [dependencies]
 num = "0.4.0"
 ash = "0.36.0"
-winit = "0.26.1"
-raw-window-handle = "0.4.3"
-gpu-allocator = "0.17.0"
+winit = "0.27.1"
+raw-window-handle = "0.5.0"
+gpu-allocator = "0.18.0"
 nalgebra = "0.31.0"
 cfg-if = "1.0.0"
 gltf = "1.0.0"
 bitflags = "1.3.2"
 itertools = "0.10.3"
+take_mut = "0.2.2"
 
 [build-dependencies]
-shaderc = "0.7.4"
+shaderc = "0.8.0"
+hassle-rs = "0.9.0"
 
 [dev-dependencies]
 criterion = "0.3.5"

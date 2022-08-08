@@ -5,7 +5,6 @@ use crate::vk_renderer::vk_allocator::vk_descriptor_sets_allocator::DescriptorSe
 use crate::vk_renderer::vk_allocator::VkAllocator;
 use ash::vk;
 use std::cell::RefCell;
-use std::ops::DerefMut;
 use std::rc::Rc;
 
 pub struct VkRTDescriptorSet {
@@ -14,7 +13,6 @@ pub struct VkRTDescriptorSet {
     image_sampler: vk::Sampler,
     model_info_host_allocation: SubAllocationData,
     model_info_device_allocation: SubAllocationData,
-    model_info_bytes_occupied: u64,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_set_allocation: DescriptorSetAllocation,
 }
@@ -120,7 +118,6 @@ impl VkRTDescriptorSet {
             image_sampler,
             model_info_host_allocation,
             model_info_device_allocation,
-            model_info_bytes_occupied: 0,
             descriptor_set_layout,
             descriptor_set_allocation,
         }
@@ -171,35 +168,18 @@ impl VkRTDescriptorSet {
         let required_buffer_size =
             shader_primitive_infos.len() * std::mem::size_of::<ShaderPrimitiveInfo>();
         if required_buffer_size > self.model_info_host_allocation.get_size() {
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
-                .free(std::mem::replace(
-                    &mut self.model_info_host_allocation,
-                    unsafe { std::mem::zeroed() },
-                ));
-            self.model_info_host_allocation = self
-                .allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
-                .allocate(required_buffer_size, 1);
+            let mut al = self.allocator.as_ref().borrow_mut();
 
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
-                .free(std::mem::replace(
-                    &mut self.model_info_device_allocation,
-                    unsafe { std::mem::zeroed() },
-                ));
-            self.model_info_device_allocation = self
-                .allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
-                .allocate(required_buffer_size, 1);
+            take_mut::take(&mut self.model_info_host_allocation, |allocation| {
+                al.get_host_uniform_sub_allocator_mut().free(allocation);
+                al.get_host_uniform_sub_allocator_mut()
+                    .allocate(required_buffer_size, 128)
+            });
+            take_mut::take(&mut self.model_info_device_allocation, |allocation| {
+                al.get_device_uniform_sub_allocator_mut().free(allocation);
+                al.get_device_uniform_sub_allocator_mut()
+                    .allocate(required_buffer_size, 128)
+            });
         }
 
         let dst_slice = unsafe {
@@ -213,7 +193,7 @@ impl VkRTDescriptorSet {
         };
         dst_slice.copy_from_slice(shader_primitive_infos.as_slice());
 
-        self.update_primitives_info_descriptor_set(&primitive_infos);
+        self.update_primitives_info_descriptor_set(primitive_infos);
 
         unsafe {
             let buffer_region = vk::BufferCopy2::builder()
@@ -284,27 +264,21 @@ impl Drop for VkRTDescriptorSet {
         unsafe {
             self.device
                 .destroy_descriptor_set_layout(self.descriptor_set_layout, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_descriptor_set_allocator_mut()
+
+            let mut al = self.allocator.as_ref().borrow_mut();
+
+            al.get_descriptor_set_allocator_mut()
                 .free_descriptor_sets(std::mem::replace(
                     &mut self.descriptor_set_allocation,
                     DescriptorSetAllocation::null(),
                 ));
             self.device.destroy_sampler(self.image_sampler, None);
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_host_uniform_sub_allocator_mut()
+            al.get_host_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.model_info_host_allocation,
                     std::mem::zeroed(),
                 ));
-            self.allocator
-                .as_ref()
-                .borrow_mut()
-                .get_device_uniform_sub_allocator_mut()
+            al.get_device_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
                     &mut self.model_info_device_allocation,
                     std::mem::zeroed(),

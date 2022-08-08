@@ -1,5 +1,5 @@
 use ash::vk;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fmt::Write;
 use std::fs::File;
 use std::io::Read;

@@ -25,7 +25,7 @@ fn main() {
             width: window_size.0,
             height: window_size.1,
         },
-        window.get_window_handle(),
+        (window.get_window_handle(), window.get_display_handle()),
     );
     renderer.add_model(
         std::path::Path::new("assets/models/Sponza.glb"),
@@ -69,7 +69,7 @@ fn main() {
     let mut camera_virtual_pos = Vector2::<f32>::new(0.0f32, 0.0f32);
     let mut clock = std::time::Instant::now();
     window.event_loop.run_return(|event, _, control_flow| {
-        *control_flow = winit::event_loop::ControlFlow::Poll;
+        *control_flow = ControlFlow::Poll;
         match event {
             Event::WindowEvent { event, .. } => match event {
                 WindowEvent::CloseRequested => {
@@ -86,7 +86,7 @@ fn main() {
                         Some(winit::event::VirtualKeyCode::LControl) => camera_pos_diff[1] = SPEED,
                         Some(winit::event::VirtualKeyCode::LShift) => camera_pos_diff[1] = -SPEED,
                         Some(winit::event::VirtualKeyCode::Escape) => {
-                            *control_flow = winit::event_loop::ControlFlow::Exit
+                            *control_flow = ControlFlow::Exit
                         }
                         _ => {}
                     }
@@ -124,8 +124,6 @@ fn main() {
                 renderer.camera_mut().set_dir(euclidian_dir);
             }
             Event::MainEventsCleared => {
-                dbg!(renderer.camera_mut().pos());
-                dbg!(renderer.camera_mut().dir());
                 clock = std::time::Instant::now();
                 renderer.render_frame(&window.window);
                 frame_timer.frame_end();
