@@ -1,6 +1,7 @@
 use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
 use super::vk_model::VkModel;
+use super::vk_rendering_layers::vk_present::VkPresent;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
 use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
@@ -130,6 +131,7 @@ pub struct VulkanTempleRayTracedRenderer {
     rendered_frames: u64,
     lightning_layer: VkRTLightningShadows,
     ao_layer: VkXeGtao,
+    tonemap_layer: VkPresent,
     frames_data: [FrameData; 3],
     bvk: vk_base::VkBase,
 }
@@ -159,9 +161,11 @@ impl VulkanTempleRayTracedRenderer {
             .buffer_device_address(true)
             .descriptor_binding_storage_buffer_update_after_bind(true)
             .descriptor_binding_sampled_image_update_after_bind(true)
+            .descriptor_binding_storage_image_update_after_bind(true)
             .descriptor_binding_partially_bound(true)
             .runtime_descriptor_array(true)
-            .shader_sampled_image_array_non_uniform_indexing(true);
+            .shader_sampled_image_array_non_uniform_indexing(true)
+            .shader_storage_image_array_non_uniform_indexing(true);
         let mut vulkan_13_features =
             vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
         let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
@@ -187,7 +191,7 @@ impl VulkanTempleRayTracedRenderer {
         bvk.recreate_swapchain(
             vk::PresentModeKHR::FIFO,
             window_size,
-            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::STORAGE,
+            vk::ImageUsageFlags::STORAGE,
             vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
@@ -261,7 +265,7 @@ impl VulkanTempleRayTracedRenderer {
                 lights.descriptor_set_layout(),
             ],
             window_size,
-            vk::Format::R8G8B8A8_UNORM,
+            vk::Format::B10G11R11_UFLOAT_PACK32,
             init_cb,
         );
 
@@ -270,7 +274,7 @@ impl VulkanTempleRayTracedRenderer {
             allocator.clone(),
             window_size,
             GtaoSettings {
-                denoise: DenoiseLevel::Soft,
+                denoise: DenoiseLevel::Sharp,
                 quality: QualityLevel::ULTRA,
             },
             std::path::Path::new("assets//shaders-spirv"),
@@ -278,6 +282,19 @@ impl VulkanTempleRayTracedRenderer {
             lightning_layer.get_output_depth_image_view(),
             lightning_layer.get_output_normal_image(),
             lightning_layer.get_output_normal_image_view(),
+        );
+
+        let tonemap_layer = VkPresent::new(
+            device.clone(),
+            allocator.clone(),
+            window_size,
+            std::path::Path::new("assets//shaders-spirv"),
+            lightning_layer.get_color_output_image(),
+            lightning_layer.get_color_output_image_view(),
+            ao_layer.output_ao_image(),
+            ao_layer.output_ao_image_view(),
+            bvk.get_swapchain_images().to_vec(),
+            bvk.get_swapchain_image_views().to_vec(),
         );
 
         let frames_data: [FrameData; 3] = (0..3)
@@ -300,7 +317,7 @@ impl VulkanTempleRayTracedRenderer {
             .ok()
             .unwrap();
 
-        let rtr = VulkanTempleRayTracedRenderer {
+        let mut rtr = VulkanTempleRayTracedRenderer {
             bvk,
             device,
             acceleration_structure_fp,
@@ -313,6 +330,7 @@ impl VulkanTempleRayTracedRenderer {
             rt_descriptor_set,
             lightning_layer,
             ao_layer,
+            tonemap_layer,
             frames_data,
             rendered_frames: 0,
         };
@@ -396,12 +414,12 @@ impl VulkanTempleRayTracedRenderer {
         let wait_semaphore_submit_infos = [
             vk::SemaphoreSubmitInfoKHR::builder()
                 .semaphore(self.frames_data[current_frame_idx].semaphores[0])
-                .stage_mask(vk::PipelineStageFlags2KHR::BLIT)
+                .stage_mask(vk::PipelineStageFlags2KHR::COMPUTE_SHADER)
                 .device_index(0)
                 .build(),
             vk::SemaphoreSubmitInfoKHR::builder()
                 .semaphore(self.frames_data[current_frame_idx].semaphores[1])
-                .stage_mask(vk::PipelineStageFlags2KHR::BLIT)
+                .stage_mask(vk::PipelineStageFlags2KHR::COMPUTE_SHADER)
                 .device_index(0)
                 .build(),
         ];
@@ -448,6 +466,7 @@ impl VulkanTempleRayTracedRenderer {
                 .unwrap();
         }
         self.record_main_command(next_frame_idx);
+        // end of next frame recording
 
         let swapchain = self.bvk.get_swapchain().unwrap();
         let present_info = vk::PresentInfoKHR::builder()
@@ -512,7 +531,7 @@ impl VulkanTempleRayTracedRenderer {
         self.bvk.recreate_swapchain(
             vk::PresentModeKHR::FIFO,
             presentation_resolution,
-            vk::ImageUsageFlags::TRANSFER_DST | vk::ImageUsageFlags::STORAGE,
+            vk::ImageUsageFlags::STORAGE,
             vk::SurfaceFormatKHR {
                 format: vk::Format::B8G8R8A8_UNORM,
                 color_space: vk::ColorSpaceKHR::SRGB_NONLINEAR,
@@ -527,6 +546,16 @@ impl VulkanTempleRayTracedRenderer {
             self.lightning_layer.get_output_depth_image_view(),
             self.lightning_layer.get_output_normal_image(),
             self.lightning_layer.get_output_normal_image_view(),
+        );
+
+        self.tonemap_layer.resize(
+            presentation_resolution,
+            self.lightning_layer.get_color_output_image(),
+            self.lightning_layer.get_color_output_image_view(),
+            self.ao_layer.output_ao_image(),
+            self.ao_layer.output_ao_image_view(),
+            self.bvk.get_swapchain_images().to_vec(),
+            self.bvk.get_swapchain_image_views().to_vec(),
         );
 
         for i in 0..self.frames_data.len() {
@@ -559,91 +588,15 @@ impl VulkanTempleRayTracedRenderer {
                     .begin_command_buffer(cb, &command_buffer_bi)
                     .unwrap();
             }
-            let image_memory_barriers = [
-                vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                    .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_READ)
-                    .old_layout(vk::ImageLayout::GENERAL)
-                    .new_layout(vk::ImageLayout::GENERAL)
-                    .image(self.lightning_layer.get_output_image())
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .build(),
-                vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
-                    .src_access_mask(vk::AccessFlags2::NONE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::BLIT)
-                    .dst_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
-                    .old_layout(vk::ImageLayout::UNDEFINED)
-                    .new_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                    .image(self.bvk.get_swapchain_images()[i])
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .build(),
-            ];
-            let dependency_info =
-                vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
-            unsafe {
-                self.device.cmd_pipeline_barrier2(cb, &dependency_info);
-            }
 
-            let region = vk::ImageBlit2::builder()
-                .src_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .src_offsets([
-                    vk::Offset3D { x: 0, y: 0, z: 0 },
-                    vk::Offset3D {
-                        x: self.bvk.get_swapchain_create_info().image_extent.width as i32,
-                        y: self.bvk.get_swapchain_create_info().image_extent.height as i32,
-                        z: 1,
-                    },
-                ])
-                .dst_subresource(vk::ImageSubresourceLayers {
-                    aspect_mask: vk::ImageAspectFlags::COLOR,
-                    mip_level: 0,
-                    base_array_layer: 0,
-                    layer_count: 1,
-                })
-                .dst_offsets([
-                    vk::Offset3D { x: 0, y: 0, z: 0 },
-                    vk::Offset3D {
-                        x: self.bvk.get_swapchain_create_info().image_extent.width as i32,
-                        y: self.bvk.get_swapchain_create_info().image_extent.height as i32,
-                        z: 1,
-                    },
-                ]);
-            let image_blit_info = vk::BlitImageInfo2::builder()
-                .src_image(self.lightning_layer.get_output_image())
-                .src_image_layout(vk::ImageLayout::GENERAL)
-                .dst_image(self.bvk.get_swapchain_images()[i])
-                .dst_image_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
-                .regions(std::slice::from_ref(&region))
-                .filter(vk::Filter::LINEAR);
-            unsafe {
-                self.device.cmd_blit_image2(cb, &image_blit_info);
-            }
+            self.tonemap_layer.present(cb, i as u32);
+
             let image_memory_barrier = vk::ImageMemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::BLIT)
-                .src_access_mask(vk::AccessFlags2::TRANSFER_WRITE)
+                .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
                 .dst_stage_mask(vk::PipelineStageFlags2::NONE)
                 .dst_access_mask(vk::AccessFlags2::NONE)
-                .old_layout(vk::ImageLayout::TRANSFER_DST_OPTIMAL)
+                .old_layout(vk::ImageLayout::GENERAL)
                 .new_layout(vk::ImageLayout::PRESENT_SRC_KHR)
                 .image(self.bvk.get_swapchain_images()[i])
                 .subresource_range(vk::ImageSubresourceRange {

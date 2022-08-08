@@ -130,7 +130,7 @@ impl VkRTLightningShadows {
             &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
             rendering_resolution,
             output_image_format,
-            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::TRANSFER_SRC,
+            vk::ImageUsageFlags::STORAGE,
             &mut self.output_image,
             &mut self.output_image_view,
         );
@@ -158,11 +158,11 @@ impl VkRTLightningShadows {
         self.update_output_images_descriptor_set();
     }
 
-    pub fn get_output_image(&self) -> vk::Image {
+    pub fn get_color_output_image(&self) -> vk::Image {
         self.output_image.get_image()
     }
 
-    pub fn get_output_image_view(&self) -> vk::ImageView {
+    pub fn get_color_output_image_view(&self) -> vk::ImageView {
         self.output_image_view
     }
 
