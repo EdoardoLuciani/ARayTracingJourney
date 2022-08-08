@@ -340,10 +340,6 @@ impl VulkanTempleRayTracedRenderer {
         }
         rtr.submit_and_wait(init_cb, rtr.bvk.get_queues()[0]);
 
-        for i in 0..rtr.frames_data.len() {
-            rtr.record_static_command_buffers(i);
-        }
-
         rtr
     }
 
@@ -366,6 +362,9 @@ impl VulkanTempleRayTracedRenderer {
                 ))
                 .unwrap();
             self.record_main_command(frame_data_idx);
+        }
+        for i in 0..self.frames_data.len() {
+            self.record_static_commands(i);
         }
     }
 
@@ -560,12 +559,11 @@ impl VulkanTempleRayTracedRenderer {
 
         for i in 0..self.frames_data.len() {
             self.frames_data[i].recreate_fence();
-            self.record_static_command_buffers(i);
         }
         self.prepare_first_frame();
     }
 
-    fn record_static_command_buffers(&self, frame_data_idx: usize) {
+    fn record_static_commands(&self, frame_data_idx: usize) {
         let frame_data = &self.frames_data[frame_data_idx];
         unsafe {
             self.device
