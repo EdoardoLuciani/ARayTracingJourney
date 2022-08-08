@@ -57,7 +57,7 @@ impl VkBase {
                 let instance_pnext = &validation_features as *const vk::ValidationFeaturesEXT as *const std::ffi::c_void;
             }
             else {
-                let layer_names = [];
+                let layer_names: &[&str] = &[];
                 let instance_pnext = std::ptr::null();
             }
         }
