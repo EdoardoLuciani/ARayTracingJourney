@@ -7,7 +7,7 @@ use std::cell::RefCell;
 use std::path::Path;
 use std::rc::Rc;
 
-pub struct VkPresent {
+pub struct VkTonemap {
     device: Rc<ash::Device>,
     allocator: Rc<RefCell<VkAllocator>>,
     presentation_resolution: vk::Extent2D,
@@ -23,7 +23,7 @@ pub struct VkPresent {
     pipeline: vk::Pipeline,
 }
 
-impl VkPresent {
+impl VkTonemap {
     pub fn new(
         device: Rc<ash::Device>,
         allocator: Rc<RefCell<VkAllocator>>,
@@ -303,7 +303,7 @@ impl VkPresent {
     }
 }
 
-impl Drop for VkPresent {
+impl Drop for VkTonemap {
     fn drop(&mut self) {
         unsafe {
             self.device

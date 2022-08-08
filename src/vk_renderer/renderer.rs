@@ -1,8 +1,8 @@
 use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
 use super::vk_model::VkModel;
-use super::vk_rendering_layers::vk_present::VkPresent;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
+use super::vk_rendering_layers::vk_tonemap::VkTonemap;
 use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_blas_builder::VkBlasBuilder;
@@ -131,7 +131,7 @@ pub struct VulkanTempleRayTracedRenderer {
     rendered_frames: u64,
     lightning_layer: VkRTLightningShadows,
     ao_layer: VkXeGtao,
-    tonemap_layer: VkPresent,
+    tonemap_layer: VkTonemap,
     frames_data: [FrameData; 3],
     bvk: vk_base::VkBase,
 }
@@ -284,7 +284,7 @@ impl VulkanTempleRayTracedRenderer {
             lightning_layer.get_output_normal_image_view(),
         );
 
-        let tonemap_layer = VkPresent::new(
+        let tonemap_layer = VkTonemap::new(
             device.clone(),
             allocator.clone(),
             window_size,
