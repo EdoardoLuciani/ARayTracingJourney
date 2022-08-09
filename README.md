@@ -4,7 +4,6 @@ ARayTracingJourney, like the title mentions is a repo where my main objective is
 
 My ultimate goal is to write the successor of my first renderer [TheVulkanTemple](https://github.com/EdoardoLuciani/TheVulkanTemple).
 
-![Screenshot](docs/screenshot1.png)
 
 ## Features
 - PBR pipeline
@@ -12,7 +11,18 @@ My ultimate goal is to write the successor of my first renderer [TheVulkanTemple
 - Ray traced shadows
 - Point, spot, directional and area lights
 - XeGTAO ambient occlusion (https://github.com/GameTechDev/XeGTAO)
-- High dynamic range with final tonemapping
+- High dynamic range with FidelityFX-LPM tonemapping (https://github.com/GPUOpen-Effects/FidelityFX-LPM)
 - GLTF models as inputs
+
+## Feature History
+
+Only lighting and shadows
+![Screenshot](docs/screenshot1.png)
+
+Added AO
+![Screenshot](docs/screenshot2.png)
+
+Switched ACES tonemapper to FidelityFX-LPM
+![Screenshot](docs/screenshot3.png)
 
 
