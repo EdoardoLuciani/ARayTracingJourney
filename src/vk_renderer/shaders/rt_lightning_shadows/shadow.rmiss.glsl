@@ -7,5 +7,5 @@
 layout(location = 1) rayPayloadInEXT ShadowPayload prd;
 
 void main() {
-    prd.is_shadowed = false;
+    prd.is_lit = true;
 }

@@ -161,9 +161,8 @@ void main() {
             vec3 rho_s = CookTorrance_specular(NdotL, NdotV, NdotH, corrected_roughness, Ks);
             vec3 rho_d = Kd * Burley_diffuse_local_sss(corrected_roughness, NdotV, nc_NdotV, nc_NdotL, LdotH, 0.4);
 
-            float shadow_attenuation = 1.0f;
             if (casts_shadows(lights[i]) && nc_NdotL > 0) {
-                shadow_payload.is_shadowed = true;
+                shadow_payload.is_lit = false;
                 traceRayEXT(topLevelAS,
                     gl_RayFlagsTerminateOnFirstHitEXT | gl_RayFlagsOpaqueEXT | gl_RayFlagsSkipClosestHitShaderEXT,
                     0xFF,
@@ -176,15 +175,16 @@ void main() {
                     length(nn_L),
                     1
                 );
-                if (shadow_payload.is_shadowed) {
-                    shadow_attenuation = 0.05;
-                }
             }
 
             vec3 radiance = get_light_radiance(lights[i], world_pos, L);
-            rho += (rho_s + rho_d) * radiance * shadow_attenuation * NdotL;
+            rho += (rho_s + rho_d) * radiance * float(shadow_payload.is_lit) * NdotL;
         }
+        // direct lightning
         out_color = rho;
+
+        // indirect lightning
+        out_color += 0.01 * albedo;
 
         vec4 ndc_pos = view * vec4(world_pos, 1.0f);
         out_depth = -ndc_pos.z;

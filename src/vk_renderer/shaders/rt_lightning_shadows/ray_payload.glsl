@@ -7,5 +7,5 @@ struct HitPayload {
 };
 
 struct ShadowPayload {
-    bool is_shadowed;
+    bool is_lit;
 };
