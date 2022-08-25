@@ -8,6 +8,7 @@ use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_blas_builder::VkBlasBuilder;
 use crate::vk_renderer::vk_camera::VkCamera;
 use crate::vk_renderer::vk_lights::VkLights;
+use crate::vk_renderer::vk_rendering_layers::amd_fsr2::AmdFsr2;
 use crate::vk_renderer::vk_rendering_layers::vk_xe_gtao::{
     DenoiseLevel, GtaoSettings, QualityLevel, VkXeGtao,
 };
@@ -131,6 +132,7 @@ pub struct VulkanTempleRayTracedRenderer {
     rendered_frames: u64,
     lightning_layer: VkRTLightningShadows,
     ao_layer: VkXeGtao,
+    amd_fsr2_layer: AmdFsr2,
     tonemap_layer: VkTonemap,
     frames_data: [FrameData; 3],
     bvk: vk_base::VkBase,
@@ -284,6 +286,20 @@ impl VulkanTempleRayTracedRenderer {
             lightning_layer.get_output_normal_image_view(),
         );
 
+        let factor = 0.8f32;
+        let rendering_resolution = vk::Extent2D {
+            width: (window_size.width as f32 * factor) as u32,
+            height: (window_size.height as f32 * factor) as u32,
+        };
+        let amd_fsr2_layer = AmdFsr2::new(
+            device.clone(),
+            bvk.get_physical_device(),
+            bvk.get_entry(),
+            bvk.get_instance(),
+            rendering_resolution,
+            window_size,
+        );
+
         let tonemap_layer = VkTonemap::new(
             device.clone(),
             allocator.clone(),
@@ -330,6 +346,7 @@ impl VulkanTempleRayTracedRenderer {
             rt_descriptor_set,
             lightning_layer,
             ao_layer,
+            amd_fsr2_layer,
             tonemap_layer,
             frames_data,
             rendered_frames: 0,

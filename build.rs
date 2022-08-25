@@ -199,30 +199,30 @@ impl ShaderCompiler {
 }
 
 fn main() {
+    let project_dir_os_str = std::env::var_os("CARGO_MANIFEST_DIR").unwrap();
+
+    // link amdfsr2 libraries
+    println!(
+        "cargo:rustc-link-search=native={}",
+        Path::new(&project_dir_os_str)
+            .join("src/vk_renderer/vk_rendering_layers/amd_fsr2")
+            .display()
+    );
+    println!("cargo:rustc-link-lib=static=ffx_fsr2_api_vk_x64");
+    println!("cargo:rustc-link-lib=static=ffx_fsr2_api_x64");
+
     // Tell the build script to only run again if we change our source shaders
     let shaders_source_dir = Path::new("src/vk_renderer/shaders");
-    println!(
-        "cargo:rerun-if-changed={}",
-        shaders_source_dir.to_str().unwrap()
-    );
+    println!("cargo:rerun-if-changed={}", shaders_source_dir.display());
 
     // Create destination path
-    let mut out_dir = PathBuf::new();
-    out_dir.push(
-        std::env::var_os("CARGO_MANIFEST_DIR")
-            .unwrap()
-            .to_str()
-            .unwrap(),
-    );
-    out_dir.push("assets");
-    out_dir.push("shaders-spirv");
-    std::fs::create_dir_all(out_dir.as_path())
+    let out_dir = Path::new(&project_dir_os_str).join("assets/shaders-spirv");
+    std::fs::create_dir_all(&out_dir)
         .expect("Could not create assets//shaders-spirv directory in CARGO_MANIFEST_DIR");
 
     // Create the compiler
     let mut shader_compiler = ShaderCompiler::new();
-
-    let err = shader_compiler.compile_shaders_recursively(shaders_source_dir, out_dir.as_path());
+    let err = shader_compiler.compile_shaders_recursively(shaders_source_dir, &out_dir);
     if err {
         panic!("Some shaders did not compile!")
     }
