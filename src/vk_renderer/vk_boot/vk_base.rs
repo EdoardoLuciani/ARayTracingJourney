@@ -368,6 +368,10 @@ impl VkBase {
         }
     }
 
+    pub fn get_entry(&self) -> &ash::Entry {
+        &self.entry_fn
+    }
+
     pub fn get_instance(&self) -> &ash::Instance {
         &self.instance
     }
