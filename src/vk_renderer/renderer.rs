@@ -167,7 +167,8 @@ impl VulkanTempleRayTracedRenderer {
             .descriptor_binding_partially_bound(true)
             .runtime_descriptor_array(true)
             .shader_sampled_image_array_non_uniform_indexing(true)
-            .shader_storage_image_array_non_uniform_indexing(true);
+            .shader_storage_image_array_non_uniform_indexing(true)
+            .shader_float16(true);
         let mut vulkan_13_features =
             vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
         let physical_device_features2 = vk::PhysicalDeviceFeatures2::builder()
