@@ -13,7 +13,6 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new(resolution: (u32, u32), fullscreen: Option<Fullscreen>) -> Self {
-        dbg!(resolution);
         let event_loop = event_loop::EventLoop::new();
         let window = window::WindowBuilder::new()
             .with_fullscreen(fullscreen)
@@ -23,7 +22,6 @@ impl WindowManager {
             })
             .build(&event_loop)
             .unwrap();
-            dbg!(window.inner_size());
         WindowManager { event_loop, window }
     }
 
