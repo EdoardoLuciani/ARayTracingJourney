@@ -1,7 +1,7 @@
 use raw_window_handle::{
     HasRawDisplayHandle, HasRawWindowHandle, RawDisplayHandle, RawWindowHandle,
 };
-use winit::dpi::LogicalSize;
+use winit::dpi::PhysicalSize;
 use winit::event_loop::EventLoop;
 use winit::window::Fullscreen;
 use winit::*;
@@ -13,15 +13,17 @@ pub struct WindowManager {
 
 impl WindowManager {
     pub fn new(resolution: (u32, u32), fullscreen: Option<Fullscreen>) -> Self {
+        dbg!(resolution);
         let event_loop = event_loop::EventLoop::new();
         let window = window::WindowBuilder::new()
             .with_fullscreen(fullscreen)
-            .with_min_inner_size(LogicalSize {
+            .with_inner_size(PhysicalSize {
                 width: resolution.0,
                 height: resolution.1,
             })
             .build(&event_loop)
             .unwrap();
+            dbg!(window.inner_size());
         WindowManager { event_loop, window }
     }
 
