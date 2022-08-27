@@ -28,6 +28,9 @@ RWTexture2D<float4>         g_outputDbgImage    ;
 #define XE_GTAO_PI               	(3.1415926535897932384626433832795)
 #define XE_GTAO_PI_HALF             (1.5707963267948966192313216916398)
 
+#define PI 3.141593
+#define HALF_PI 1.570796
+
 #ifndef XE_GTAO_USE_HALF_FLOAT_PRECISION
 #define XE_GTAO_USE_HALF_FLOAT_PRECISION 1
 #endif
@@ -174,14 +177,14 @@ lpfloat XeGTAO_FastSqrt( float x )
     return (lpfloat)(asfloat( 0x1fbd1df5 + ( asint( x ) >> 1 ) ));
 }
 // input [-1, 1] and output [0, PI], from https://seblagarde.wordpress.com/2014/12/01/inverse-trigonometric-functions-gpu-optimization-for-amd-gcn-architecture/
-lpfloat XeGTAO_FastACos( lpfloat inX )
-{ 
-    const lpfloat PI = 3.141593;
-    const lpfloat HALF_PI = 1.570796;
-    lpfloat x = abs(inX); 
-    lpfloat res = -0.156583 * x + HALF_PI; 
-    res *= XeGTAO_FastSqrt(1.0 - x); 
-    return (inX >= 0) ? res : PI - res; 
+lpfloat XeGTAO_FastACos( const lpfloat inX )
+{
+    const lpfloat x = abs(inX);
+    lpfloat res = mad(-0.156583, x, HALF_PI) * XeGTAO_FastSqrt(1.0 - x); 
+    if (inX >= 0) {
+        return res;
+    }
+    return PI - res;
 }
 
 uint XeGTAO_EncodeVisibilityBentNormal( lpfloat visibility, lpfloat3 bentNormal )
