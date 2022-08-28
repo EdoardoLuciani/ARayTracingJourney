@@ -180,7 +180,7 @@ lpfloat XeGTAO_FastSqrt( float x )
 lpfloat XeGTAO_FastACos( const lpfloat inX )
 {
     const lpfloat x = abs(inX);
-    lpfloat res = mad(-0.156583, x, HALF_PI) * XeGTAO_FastSqrt(1.0 - x); 
+    const lpfloat res = mad(-0.156583, x, HALF_PI) * XeGTAO_FastSqrt(1.0 - x); 
     if (inX >= 0) {
         return res;
     }
