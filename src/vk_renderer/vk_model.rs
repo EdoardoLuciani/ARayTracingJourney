@@ -21,7 +21,7 @@ use super::model_reader::model_reader::*;
 
 // Trait for managing the state of the model from disk <-> host <-> device
 trait VkModelTransferLocation {
-    fn to_disk(self: Box<Self>, vk_model: &mut VkModel);
+    fn to_storage(self: Box<Self>, vk_model: &mut VkModel);
     fn to_host(self: Box<Self>, vk_model: &mut VkModel, cb: vk::CommandBuffer);
     fn to_device(self: Box<Self>, vk_model: &mut VkModel, cb: vk::CommandBuffer);
     fn as_any(&self) -> &dyn Any;
@@ -29,7 +29,7 @@ trait VkModelTransferLocation {
 
 struct Storage;
 impl VkModelTransferLocation for Storage {
-    fn to_disk(self: Box<Storage>, vk_model: &mut VkModel) {
+    fn to_storage(self: Box<Storage>, vk_model: &mut VkModel) {
         vk_model.state = Some(self);
     }
 
@@ -57,7 +57,7 @@ struct Host {
 }
 
 impl VkModelTransferLocation for Host {
-    fn to_disk(self: Box<Host>, vk_model: &mut VkModel) {
+    fn to_storage(self: Box<Host>, vk_model: &mut VkModel) {
         vk_model
             .allocator
             .as_ref()
@@ -157,7 +157,7 @@ struct Device {
 }
 
 impl VkModelTransferLocation for Device {
-    fn to_disk(mut self: Box<Device>, vk_model: &mut VkModel) {
+    fn to_storage(mut self: Box<Device>, vk_model: &mut VkModel) {
         let mut allocator = vk_model.allocator.as_ref().borrow_mut();
 
         allocator
@@ -346,7 +346,7 @@ impl VkModel {
         match distance {
             x if x <= 10f32 => state.to_device(self, cb),
             x if x <= 20f32 => state.to_host(self, cb),
-            _ => state.to_disk(self),
+            _ => state.to_storage(self),
         };
 
         let state = self.state.as_ref().and_then(|state| state.as_any().downcast_ref::<Device>());
@@ -1002,7 +1002,7 @@ impl Drop for VkModel {
         self.cleanup_model_changed_state_resources();
 
         if let Some(state) = self.state.take() {
-            state.to_disk(self);
+            state.to_storage(self);
         }
     }
 }
