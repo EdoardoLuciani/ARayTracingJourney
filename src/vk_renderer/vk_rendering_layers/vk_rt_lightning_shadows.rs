@@ -13,6 +13,7 @@ use std::rc::Rc;
 const DESCRIPTOR_SET_IMAGE_BINDING: u32 = 0;
 const DESCRIPTOR_SET_DEPTH_IMAGE_BINDING: u32 = 1;
 const DESCRIPTOR_SET_NORMAL_IMAGE_BINDING: u32 = 2;
+const DESCRIPTOR_SET_MOTION_VECTOR_IMAGE_BINDING: u32 = 3;
 
 pub struct VkRTLightningShadows {
     device: Rc<ash::Device>,
@@ -27,6 +28,8 @@ pub struct VkRTLightningShadows {
     output_depth_image_view: vk::ImageView,
     output_normal_image: ImageAllocation,
     output_normal_image_view: vk::ImageView,
+    output_motion_vector_image: ImageAllocation,
+    output_motion_vector_image_view: vk::ImageView,
     pipeline_layout: vk::PipelineLayout,
     pipeline: vk::Pipeline,
     sbt_buffer: BufferAllocation,
@@ -61,6 +64,12 @@ impl VkRTLightningShadows {
                     .build(),
                 vk::DescriptorSetLayoutBinding::builder()
                     .binding(DESCRIPTOR_SET_NORMAL_IMAGE_BINDING)
+                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                    .descriptor_count(1)
+                    .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
+                    .build(),
+                vk::DescriptorSetLayoutBinding::builder()
+                    .binding(DESCRIPTOR_SET_MOTION_VECTOR_IMAGE_BINDING)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                     .descriptor_count(1)
                     .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
@@ -113,6 +122,8 @@ impl VkRTLightningShadows {
             output_depth_image_view: vk::ImageView::null(),
             output_normal_image: unsafe { std::mem::zeroed() },
             output_normal_image_view: vk::ImageView::null(),
+            output_motion_vector_image: unsafe { std::mem::zeroed() },
+            output_motion_vector_image_view: vk::ImageView::null(),
             pipeline_layout: pipeline_data.0,
             pipeline: pipeline_data.1,
             sbt_buffer: sbt_data.0,
@@ -155,6 +166,16 @@ impl VkRTLightningShadows {
             &mut self.output_normal_image_view,
         );
 
+        Self::replace_output_image(
+            &self.device,
+            &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
+            rendering_resolution,
+            vk::Format::R16G16_SFLOAT,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
+            &mut self.output_motion_vector_image,
+            &mut self.output_motion_vector_image_view,
+        );
+
         self.update_output_images_descriptor_set();
     }
 
@@ -180,6 +201,14 @@ impl VkRTLightningShadows {
 
     pub fn get_output_normal_image_view(&self) -> vk::ImageView {
         self.output_normal_image_view
+    }
+
+    pub fn get_output_motion_vector_image(&self) -> vk::Image {
+        self.output_motion_vector_image.get_image()
+    }
+
+    pub fn get_output_motion_vector_image_view(&self) -> vk::ImageView {
+        self.output_motion_vector_image_view
     }
 
     pub fn trace_rays(
@@ -229,6 +258,22 @@ impl VkRTLightningShadows {
                     .old_layout(vk::ImageLayout::UNDEFINED)
                     .new_layout(vk::ImageLayout::GENERAL)
                     .image(self.output_normal_image.get_image())
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    })
+                    .build(),
+                vk::ImageMemoryBarrier2::builder()
+                    .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                    .src_access_mask(vk::AccessFlags2::NONE)
+                    .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                    .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                    .old_layout(vk::ImageLayout::UNDEFINED)
+                    .new_layout(vk::ImageLayout::GENERAL)
+                    .image(self.output_motion_vector_image.get_image())
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -290,6 +335,10 @@ impl VkRTLightningShadows {
             .sampler(vk::Sampler::null())
             .image_view(self.output_normal_image_view)
             .image_layout(vk::ImageLayout::GENERAL);
+        let motion_vector_image_info = vk::DescriptorImageInfo::builder()
+            .sampler(vk::Sampler::null())
+            .image_view(self.output_motion_vector_image_view)
+            .image_layout(vk::ImageLayout::GENERAL);
 
         let descriptor_set_writes = [
             vk::WriteDescriptorSet::builder()
@@ -312,6 +361,13 @@ impl VkRTLightningShadows {
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                 .image_info(std::slice::from_ref(&normal_image_info))
+                .build(),
+            vk::WriteDescriptorSet::builder()
+                .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
+                .dst_binding(DESCRIPTOR_SET_MOTION_VECTOR_IMAGE_BINDING)
+                .dst_array_element(0)
+                .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
+                .image_info(std::slice::from_ref(&motion_vector_image_info))
                 .build(),
         ];
         unsafe {
@@ -575,6 +631,14 @@ impl Drop for VkRTLightningShadows {
                 &mut self.output_depth_image,
                 std::mem::zeroed(),
             ));
+
+            self.device
+            .destroy_image_view(self.output_motion_vector_image_view, None);
+            al.get_allocator_mut().destroy_image(std::mem::replace(
+                &mut self.output_motion_vector_image,
+                std::mem::zeroed(),
+            ));
+
 
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);
