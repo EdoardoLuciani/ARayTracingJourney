@@ -1,31 +1,66 @@
 mod amd_fsr2_api_vk_bindings;
 
+use super::super::vk_allocator::vk_memory_resource_allocator::*;
+use super::super::vk_allocator::VkAllocator;
 use amd_fsr2_api_vk_bindings::*;
 use ash::{extensions::*, vk, Entry, Instance};
-use std::alloc::{alloc, dealloc, Layout};
+use gpu_allocator::MemoryLocation;
+use nalgebra::*;
+use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 
+pub struct AmdFsr2QualityLevel(f32);
+impl AmdFsr2QualityLevel {
+    pub const QUALITY: Self = Self(1.5f32);
+    pub const BALANCED: Self = Self(1.7f32);
+    pub const PERFORMANCE: Self = Self(2.0f32);
+    pub const ULTRA_PERFORMANCE: Self = Self(3.0f32);
+
+    pub fn get_recommended_input_res(&self, output_res: vk::Extent2D) -> vk::Extent2D {
+        vk::Extent2D {
+            width: (output_res.width as f32 / self.0) as u32,
+            height: (output_res.height as f32 / self.0) as u32,
+        }
+    }
+}
+
 pub struct AmdFsr2 {
     device: Rc<ash::Device>,
+    allocator: Rc<RefCell<VkAllocator>>,
     physical_device: vk::PhysicalDevice,
     scratch_buffer: Vec<u8>,
     context_description: FfxFsr2ContextDescription,
     context: FfxFsr2Context,
+    frame_index: u32,
+    proj_jitter: Vector2<f32>,
+    last_frame_time: std::time::Instant,
+    input_color_image: vk::Image,
+    input_color_image_view: vk::ImageView,
+    input_depth_image: vk::Image,
+    input_depth_image_view: vk::ImageView,
+    output_image: ImageAllocation,
+    output_image_view: vk::ImageView,
 }
 
 impl AmdFsr2 {
     pub fn new(
         device: Rc<ash::Device>,
+        allocator: Rc<RefCell<VkAllocator>>,
         physical_device: vk::PhysicalDevice,
         entry: &Entry,
         instance: &Instance,
         input_res: vk::Extent2D,
         output_res: vk::Extent2D,
+        input_color_image: vk::Image,
+        input_color_image_view: vk::ImageView,
+        input_depth_image: vk::Image,
+        input_depth_image_view: vk::ImageView,
     ) -> Self {
         let mut context_description = unsafe {
             FfxFsr2ContextDescription {
-                flags: 0,
+                flags: FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE
+                    | FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_DEPTH_INFINITE,
                 maxRenderSize: FfxDimensions2D::default(),
                 displaySize: FfxDimensions2D::default(),
                 callbacks: std::mem::zeroed(),
@@ -61,21 +96,48 @@ impl AmdFsr2 {
         let mut ret = unsafe {
             Self {
                 device,
+                allocator,
                 physical_device,
                 context_description,
                 scratch_buffer,
                 context: std::mem::zeroed(),
+                frame_index: 0,
+                proj_jitter: Vector2::zeros(),
+                last_frame_time: std::time::Instant::now(),
+                input_color_image,
+                input_color_image_view,
+                input_depth_image,
+                input_depth_image_view,
+                output_image: std::mem::zeroed(),
+                output_image_view: vk::ImageView::null(),
             }
         };
 
-        ret.resize(input_res, output_res);
+        ret.resize(
+            input_res,
+            output_res,
+            input_color_image,
+            input_color_image_view,
+            input_depth_image,
+            input_depth_image_view,
+        );
 
         ret
     }
 
-    pub fn resize(&mut self, input_res: vk::Extent2D, output_res: vk::Extent2D) {
+    pub fn resize(
+        &mut self,
+        input_res: vk::Extent2D,
+        output_res: vk::Extent2D,
+        input_color_image: vk::Image,
+        input_color_image_view: vk::ImageView,
+        input_depth_image: vk::Image,
+        input_depth_image_view: vk::ImageView,
+    ) {
         unsafe {
-            ffxFsr2ContextDestroy(&mut self.context);
+            if self.context_description.maxRenderSize != FfxDimensions2D::default() {
+                ffxFsr2ContextDestroy(&mut self.context);
+            }
 
             self.context_description.maxRenderSize = FfxDimensions2D {
                 width: input_res.width,
@@ -87,6 +149,224 @@ impl AmdFsr2 {
             };
 
             ffxFsr2ContextCreate(&mut self.context, &self.context_description);
+
+            take_mut::take(&mut self.output_image, |image| {
+                self.allocator
+                    .as_ref()
+                    .borrow_mut()
+                    .get_allocator_mut()
+                    .destroy_image(image);
+
+                let image_ci = vk::ImageCreateInfo::builder()
+                    .image_type(vk::ImageType::TYPE_2D)
+                    .format(vk::Format::B10G11R11_UFLOAT_PACK32)
+                    .extent(vk::Extent3D {
+                        width: output_res.width,
+                        height: output_res.height,
+                        depth: 1,
+                    })
+                    .mip_levels(1)
+                    .array_layers(1)
+                    .samples(vk::SampleCountFlags::TYPE_1)
+                    .tiling(vk::ImageTiling::OPTIMAL)
+                    .usage(vk::ImageUsageFlags::STORAGE)
+                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                    .initial_layout(vk::ImageLayout::UNDEFINED);
+                self.allocator
+                    .as_ref()
+                    .borrow_mut()
+                    .get_allocator_mut()
+                    .allocate_image(&image_ci, MemoryLocation::GpuOnly)
+            });
+
+            unsafe {
+                self.device.destroy_image_view(self.output_image_view, None);
+
+                let image_view_ci = vk::ImageViewCreateInfo::builder()
+                    .image(self.output_image.get_image())
+                    .view_type(vk::ImageViewType::TYPE_2D)
+                    .format(vk::Format::B10G11R11_UFLOAT_PACK32)
+                    .components(vk::ComponentMapping::default())
+                    .subresource_range(vk::ImageSubresourceRange {
+                        aspect_mask: vk::ImageAspectFlags::COLOR,
+                        base_mip_level: 0,
+                        level_count: 1,
+                        base_array_layer: 0,
+                        layer_count: 1,
+                    });
+                self.output_image_view =
+                    self.device.create_image_view(&image_view_ci, None).unwrap();
+            }
+        }
+        self.input_color_image = input_color_image;
+        self.input_color_image_view = input_color_image_view;
+        self.input_depth_image = input_depth_image;
+        self.input_depth_image_view = input_depth_image_view;
+    }
+
+    pub fn update_proj_jitter(&mut self) -> Vector2<f32> {
+        unsafe {
+            let phase_count = ffxFsr2GetJitterPhaseCount(
+                self.context_description.maxRenderSize.width as i32,
+                self.context_description.displaySize.width as i32,
+            );
+            ffxFsr2GetJitterOffset(
+                &mut self.proj_jitter.x,
+                &mut self.proj_jitter.y,
+                self.frame_index as i32,
+                phase_count,
+            );
+        }
+        self.frame_index += 1;
+        self.proj_jitter
+    }
+
+    pub fn upscale(
+        &mut self,
+        cb: vk::CommandBuffer,
+        camera_near: f32,
+        camera_far: f32,
+        camera_fovy: f32,
+        reset: bool,
+    ) {
+        let image_memory_barriers = [
+            vk::ImageMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
+                .old_layout(vk::ImageLayout::GENERAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image(self.input_color_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build(),
+            vk::ImageMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
+                .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
+                .old_layout(vk::ImageLayout::GENERAL)
+                .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
+                .image(self.input_depth_image)
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build(),
+            vk::ImageMemoryBarrier2::builder()
+                .src_stage_mask(vk::PipelineStageFlags2::NONE)
+                .src_access_mask(vk::AccessFlags2::NONE)
+                .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
+                .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .old_layout(vk::ImageLayout::UNDEFINED)
+                .new_layout(vk::ImageLayout::GENERAL)
+                .image(self.output_image.get_image())
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                })
+                .build(),
+        ];
+        let dependency_info =
+            vk::DependencyInfo::builder().image_memory_barriers(&image_memory_barriers);
+        unsafe { self.device.cmd_pipeline_barrier2(cb, &dependency_info) }
+
+        unsafe {
+            let dispatch_description = FfxFsr2DispatchDescription {
+                commandList: ffxGetCommandListVK(std::mem::transmute(cb)),
+                color: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(self.input_color_image),
+                    std::mem::transmute(self.input_color_image_view),
+                    self.context_description.maxRenderSize.width,
+                    self.context_description.maxRenderSize.height,
+                    vk::Format::B10G11R11_UFLOAT_PACK32.as_raw() as u32,
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
+                ),
+                depth: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(self.input_depth_image),
+                    std::mem::transmute(self.input_depth_image_view),
+                    self.context_description.maxRenderSize.width,
+                    self.context_description.maxRenderSize.height,
+                    vk::Format::R16_SFLOAT.as_raw() as u32,
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
+                ),
+                motionVectors: todo!(),
+                exposure: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(0u64),
+                    std::mem::transmute(0u64),
+                    1,
+                    1,
+                    vk::Format::UNDEFINED.as_raw() as u32,
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
+                ),
+                reactive: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(0u64),
+                    std::mem::transmute(0u64),
+                    1,
+                    1,
+                    vk::Format::UNDEFINED.as_raw() as u32,
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
+                ),
+                transparencyAndComposition: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(0u64),
+                    std::mem::transmute(0u64),
+                    1,
+                    1,
+                    vk::Format::UNDEFINED.as_raw() as u32,
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
+                ),
+                output: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(self.output_image.get_image()),
+                    std::mem::transmute(self.output_image_view),
+                    self.context_description.displaySize.width,
+                    self.context_description.displaySize.height,
+                    vk::Format::B10G11R11_UFLOAT_PACK32.as_raw() as u32,
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_UNORDERED_ACCESS,
+                ),
+                jitterOffset: FfxFloatCoords2D {
+                    x: self.proj_jitter.x,
+                    y: self.proj_jitter.y,
+                },
+                motionVectorScale: FfxFloatCoords2D {
+                    x: self.context_description.maxRenderSize.width as f32,
+                    y: self.context_description.maxRenderSize.height as f32,
+                },
+                renderSize: self.context_description.maxRenderSize,
+                enableSharpening: false,
+                sharpness: 1.0f32,
+                frameTimeDelta: self.last_frame_time.elapsed().as_millis() as f32,
+                preExposure: 1.0f32,
+                reset,
+                cameraNear: camera_near,
+                cameraFar: camera_far,
+                cameraFovAngleVertical: camera_fovy,
+            };
+            ffxFsr2ContextDispatch(&mut self.context, &dispatch_description);
+            self.last_frame_time = std::time::Instant::now();
         }
     }
 }
