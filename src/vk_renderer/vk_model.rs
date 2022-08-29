@@ -21,9 +21,9 @@ use super::model_reader::model_reader::*;
 
 // Trait for managing the state of the model from disk <-> host <-> device
 trait VkModelTransferLocation {
-    fn to_disk(self: Box<Self>, _vk_model: &mut VkModel) {}
-    fn to_host(self: Box<Self>, _vk_model: &mut VkModel, cb: vk::CommandBuffer) {}
-    fn to_device(self: Box<Self>, _vk_model: &mut VkModel, cb: vk::CommandBuffer) {}
+    fn to_disk(self: Box<Self>, vk_model: &mut VkModel);
+    fn to_host(self: Box<Self>, vk_model: &mut VkModel, cb: vk::CommandBuffer);
+    fn to_device(self: Box<Self>, vk_model: &mut VkModel, cb: vk::CommandBuffer);
     fn as_any(&self) -> &dyn Any;
 }
 
@@ -206,11 +206,16 @@ impl VkModelTransferLocation for Device {
                 };
             });
 
-        vk_model.state = Some(vk_model.transfer_from_device_to_host(
+        let (host_buffer_allocation, host_model_copy_info) = vk_model.transfer_from_device_to_host(
             cb,
             self.device_mesh_indices_buffer,
             self.device_primitives_info,
-        ));
+        );
+
+        vk_model.state = Some(Box::new(Host {
+            host_buffer_allocation,
+            host_model_copy_info,
+        }));
     }
 
     fn to_device(self: Box<Self>, vk_model: &mut VkModel, cb: CommandBuffer) {
@@ -748,7 +753,7 @@ impl VkModel {
         cb: vk::CommandBuffer,
         device_mesh_indices_allocation: BufferAllocation,
         mut device_primitives_info: Vec<DevicePrimitiveInfo>,
-    ) -> Box<Host> {
+    ) -> (BufferAllocation, ModelCopyInfo) {
         let host_buffer_size =
             device_primitives_info
                 .iter()
@@ -881,11 +886,7 @@ impl VkModel {
                     .map(|elem| elem.image)
                     .collect::<Vec<_>>(),
             }));
-
-        Box::new(Host {
-            host_buffer_allocation,
-            host_model_copy_info: ModelCopyInfo::new(primitives_copy_data),
-        })
+        (host_buffer_allocation, ModelCopyInfo::new(primitives_copy_data))
     }
 
     fn create_blas(
