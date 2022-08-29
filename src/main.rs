@@ -94,6 +94,7 @@ fn main() {
                         + renderer
                             .camera_mut()
                             .view_matrix()
+                            .to_homogeneous()
                             .transpose()
                             .fixed_slice::<3, 3>(0, 0)
                             * camera_pos_diff

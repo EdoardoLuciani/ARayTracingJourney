@@ -10,6 +10,7 @@
 #include "ray_payload.glsl"
 #include "../brdfs.glsl"
 #include "light.glsl"
+#include "camera.glsl"
 
 layout(binding = 0, set = 0, rgba32f) uniform image2D image;
 layout(binding = 1, set = 0, r16f) uniform image2D depth_image;
@@ -26,12 +27,8 @@ struct PrimitiveInfo {
 layout(binding = 1, set = 1, scalar) readonly buffer PrimitiveInfos { PrimitiveInfo primitive_infos[]; };
 layout(binding = 2, set = 1) uniform sampler2DArray textures[];
 
-layout(binding = 0, set = 2) uniform camera {
-    mat4 view;
-    mat4 view_inv;
-    mat4 proj;
-    mat4 proj_inv;
-    vec3 camera_pos;
+layout(binding = 0, set = 2) uniform CameraUniform {
+    Camera camera;
 };
 
 layout(binding = 0, set = 3) readonly buffer Lights { Light lights[]; };
@@ -79,9 +76,9 @@ void main() {
     const vec2 in_uv = pixel_center/vec2(gl_LaunchSizeEXT.xy);
     vec2 d = in_uv * 2.0 - 1.0;
 
-    vec4 origin    = view_inv * vec4(0, 0, 0, 1);
-    vec4 target    = proj_inv * vec4(d.x, d.y, 1, 1);
-    vec4 direction = view_inv * vec4(normalize(target.xyz), 0);
+    vec4 origin    = camera.view_inv * vec4(0, 0, 0, 1);
+    vec4 target    = camera.proj_inv * vec4(d.x, d.y, 1, 1);
+    vec4 direction = camera.view_inv * vec4(normalize(target.xyz), 0);
 
     uint  ray_flags = gl_RayFlagsOpaqueEXT;
     float t_min     = 0.001;
@@ -136,7 +133,7 @@ void main() {
         float roughness = texture(textures[nonuniformEXT(primitive_info.texture_offset)], vec3(tex_coord, 1)).g;
         float metallic = texture(textures[nonuniformEXT(primitive_info.texture_offset)], vec3(tex_coord, 1)).b;
 
-        vec3 V = normalize(camera_pos - world_pos);
+        vec3 V = normalize(camera.camera_pos - world_pos);
         vec3 F0 = mix(vec3(0.04), albedo, metallic);
         float corrected_roughness = roughness * roughness;
 
@@ -186,10 +183,9 @@ void main() {
         // indirect lightning
         out_color += 0.01 * albedo;
 
-        vec4 ndc_pos = view * vec4(world_pos, 1.0f);
-        out_depth = -ndc_pos.z;
+        out_depth = -(camera.view * vec4(world_pos, 1.0f)).z;
 
-        out_normal = mat3(transpose(view_inv)) * N;
+        out_normal = mat3(transpose(camera.view_inv)) * N;
         out_normal.yz = -out_normal.yz;
         out_normal = normalize(out_normal) * 0.5 + 0.5;
     }
