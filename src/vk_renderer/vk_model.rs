@@ -83,20 +83,14 @@ impl VkModelTransferLocation for Host {
             .as_ref()
             .borrow_mut()
             .get_host_uniform_sub_allocator_mut()
-            .allocate(std::mem::size_of::<VkModelUniform>(), 1);
+            .allocate(std::mem::size_of::<VkModelUniform>(), 128);
 
         let device_uniform_sub_allocation = vk_model
             .allocator
             .as_ref()
             .borrow_mut()
             .get_device_uniform_sub_allocator_mut()
-            .allocate(std::mem::size_of::<VkModelUniform>(), 1);
-
-        vk_model.copy_uniform(
-            &host_uniform_sub_allocation,
-            cb,
-            &device_uniform_sub_allocation,
-        );
+            .allocate(std::mem::size_of::<VkModelUniform>(), 128);
 
         let blas = match vk_model.vk_blas_builder.is_some() {
             true => {
@@ -291,14 +285,16 @@ pub struct VkModel {
     model_path: PathBuf,
     model_bounding_sphere: Sphere,
     uniform: VkModelUniform,
+    model_matrix: Matrix3x4<f32>,
     state: Option<Box<dyn VkModelTransferLocation>>,
-    needs_cb_submit: bool,
+    model_changed_state: bool,
     post_cb_submit_cleanups: Vec<Box<dyn VkModelPostSubmissionCleanup>>,
 }
 
 #[repr(C, packed)]
 struct VkModelUniform {
     model_matrix: Matrix3x4<f32>,
+    prev_model_matrix: Matrix3x4<f32>,
 }
 
 impl VkModel {
@@ -316,10 +312,12 @@ impl VkModel {
             model_path,
             model_bounding_sphere: Sphere::new(Vector3::zeros(), 0.0f32),
             uniform: VkModelUniform {
-                model_matrix: Matrix3x4::zeros(),
+                model_matrix: model_matrix,
+                prev_model_matrix: Matrix3x4::zeros(),
             },
+            model_matrix,
             state: Some(Box::new(Storage {})),
-            needs_cb_submit: false,
+            model_changed_state: false,
             post_cb_submit_cleanups: Vec::new(),
         };
         if let Some(state) = model.state.take() {
@@ -336,27 +334,35 @@ impl VkModel {
             .model_bounding_sphere
             .get_distance_from_point(*camera_pos);
 
+        self.uniform.prev_model_matrix = self.uniform.model_matrix;
+        self.uniform.model_matrix = self.model_matrix;
+
         let state = self.state.take().unwrap();
         match distance {
             x if x <= 10f32 => state.to_device(self, cb),
             x if x <= 20f32 => state.to_host(self, cb),
             _ => state.to_disk(self),
         };
+
+        let state = self.state.as_ref().and_then(|state| state.as_any().downcast_ref::<Device>());
+        if let Some(device_state) = state {
+            self.copy_uniform(&device_state.host_uniform_sub_allocation, cb, &device_state.device_uniform_sub_allocation);
+        }
     }
 
-    pub fn needs_command_buffer_submission(&self) -> bool {
-        self.needs_cb_submit
+    pub fn model_changed_state(&self) -> bool {
+        self.model_changed_state
     }
 
-    pub fn reset_command_buffer_submission_status(&mut self) {
+    pub fn cleanup_model_changed_state_resources(&mut self) {
         while let Some(cleanup) = self.post_cb_submit_cleanups.pop() {
             cleanup.cleanup(self);
         }
-        self.needs_cb_submit = false;
+        self.model_changed_state = false;
     }
 
     pub fn get_transform_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let m_matrix = self.uniform.model_matrix;
+        let m_matrix = self.model_matrix;
         let row_matrix = m_matrix.transpose();
         let matrix: [f32; 12] = row_matrix.data.as_slice().try_into().unwrap();
         vk::TransformMatrixKHR { matrix }
@@ -459,14 +465,14 @@ impl VkModel {
     }
 
     pub fn set_model_matrix(&mut self, matrix: Matrix3x4<f32>) {
-        self.uniform.model_matrix = matrix;
+        self.model_matrix = matrix;
         self.model_bounding_sphere = self
             .model_bounding_sphere
-            .transform(self.uniform.model_matrix);
+            .transform(self.model_matrix);
     }
 
     fn copy_uniform(
-        &mut self,
+        &self,
         host_uniform_sub_allocation: &SubAllocationData,
         cb: vk::CommandBuffer,
         device_uniform_sub_allocation: &SubAllocationData,
@@ -479,8 +485,8 @@ impl VkModel {
             );
 
             let buffer_copy_region = vk::BufferCopy2::builder()
-                .src_offset(0)
-                .dst_offset(0)
+                .src_offset(host_uniform_sub_allocation.get_buffer_offset() as u64)
+                .dst_offset(device_uniform_sub_allocation.get_buffer_offset() as u64)
                 .size(std::mem::size_of::<VkModelUniform>() as u64);
             let copy_buffer_info = vk::CopyBufferInfo2::builder()
                 .src_buffer(host_uniform_sub_allocation.get_buffer())
@@ -488,7 +494,6 @@ impl VkModel {
                 .regions(std::slice::from_ref(&buffer_copy_region));
             self.device.cmd_copy_buffer2(cb, &copy_buffer_info);
         }
-        self.needs_cb_submit = true;
     }
 
     fn transfer_from_disk_to_host(&mut self) -> (BufferAllocation, ModelCopyInfo) {
@@ -729,7 +734,7 @@ impl VkModel {
         )
         .collect::<Vec<_>>();
 
-        self.needs_cb_submit = true;
+        self.model_changed_state = true;
         self.post_cb_submit_cleanups
             .push(Box::new(HostToDeviceTransfer {
                 host_buffer_allocation,
@@ -867,7 +872,7 @@ impl VkModel {
             );
         }
 
-        self.needs_cb_submit = true;
+        self.model_changed_state = true;
         self.post_cb_submit_cleanups
             .push(Box::new(DeviceToHostTransfer {
                 device_mesh_indices_allocation,
@@ -983,7 +988,7 @@ impl VkModel {
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
         }
 
-        self.needs_cb_submit = true;
+        self.model_changed_state = true;
         self.post_cb_submit_cleanups.push(Box::new(BlasBuild {
             scratch_buffer: blas.release_scratch_buffer(),
         }));
@@ -993,7 +998,7 @@ impl VkModel {
 
 impl Drop for VkModel {
     fn drop(&mut self) {
-        self.reset_command_buffer_submission_status();
+        self.cleanup_model_changed_state_resources();
 
         if let Some(state) = self.state.take() {
             state.to_disk(self);
@@ -1086,11 +1091,11 @@ mod tests {
             .unwrap()
             .as_any()
             .is::<Storage>());
-        assert!(!water_bottle.needs_command_buffer_submission());
+        assert!(!water_bottle.model_changed_state());
 
         water_bottle.update_model_status(&Vector3::from_element(7.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
-        assert!(!water_bottle.needs_command_buffer_submission());
+        assert!(!water_bottle.model_changed_state());
 
         let from_disk_host_data = {
             let host_buffer_allocation = &water_bottle
@@ -1116,7 +1121,7 @@ mod tests {
 
         water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
-        assert!(water_bottle.needs_command_buffer_submission());
+        assert!(water_bottle.model_changed_state());
 
         let command_buffer_submit_info =
             vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer);
@@ -1140,7 +1145,7 @@ mod tests {
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();
         }
-        water_bottle.reset_command_buffer_submission_status();
+        water_bottle.cleanup_model_changed_state_resources();
 
         unsafe {
             let begin_command_buffer = vk::CommandBufferBeginInfo::default();
@@ -1151,7 +1156,7 @@ mod tests {
 
         water_bottle.update_model_status(&Vector3::from_element(7.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Host>());
-        assert!(water_bottle.needs_command_buffer_submission());
+        assert!(water_bottle.model_changed_state());
 
         let command_buffer_submit_info =
             vk::CommandBufferSubmitInfo::builder().command_buffer(command_buffer);
@@ -1175,7 +1180,7 @@ mod tests {
                 .wait_for_fences(std::slice::from_ref(&fence), true, u64::MAX)
                 .unwrap();
         }
-        water_bottle.reset_command_buffer_submission_status();
+        water_bottle.cleanup_model_changed_state_resources();
 
         unsafe {
             bvk.get_device()
@@ -1285,7 +1290,7 @@ mod tests {
 
         water_bottle.update_model_status(&Vector3::from_element(3.0f32), command_buffer);
         assert!(water_bottle.state.as_ref().unwrap().as_any().is::<Device>());
-        assert!(water_bottle.needs_command_buffer_submission());
+        assert!(water_bottle.model_changed_state());
 
         unsafe {
             bvk.get_device().end_command_buffer(command_buffer).unwrap();
@@ -1308,7 +1313,7 @@ mod tests {
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();
         }
-        water_bottle.reset_command_buffer_submission_status();
+        water_bottle.cleanup_model_changed_state_resources();
         unsafe {
             bvk.get_device()
                 .free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));

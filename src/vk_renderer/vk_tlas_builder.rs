@@ -417,7 +417,7 @@ mod tests {
                 .reset_command_pool(command_pool, vk::CommandPoolResetFlags::empty())
                 .unwrap();
         }
-        water_bottle.reset_command_buffer_submission_status();
+        water_bottle.cleanup_model_changed_state_resources();
         unsafe {
             bvk.get_device()
                 .free_command_buffers(command_pool, std::slice::from_ref(&command_buffer));
