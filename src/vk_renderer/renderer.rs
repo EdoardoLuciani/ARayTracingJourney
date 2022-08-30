@@ -12,8 +12,9 @@ use crate::vk_renderer::vk_rendering_layers::amd_fsr2::*;
 use crate::vk_renderer::vk_rendering_layers::vk_xe_gtao::{
     DenoiseLevel, GtaoSettings, QualityLevel, VkXeGtao,
 };
-use crate::vk_renderer::vk_rt_descriptor_set::DescriptorSetPrimitiveInfo;
+use crate::vk_renderer::vk_rt_descriptor_set::*;
 use ash::{extensions::*, vk};
+use itertools::Itertools;
 use nalgebra::*;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -164,6 +165,7 @@ impl VulkanTempleRayTracedRenderer {
             .descriptor_binding_storage_buffer_update_after_bind(true)
             .descriptor_binding_sampled_image_update_after_bind(true)
             .descriptor_binding_storage_image_update_after_bind(true)
+            .descriptor_binding_uniform_buffer_update_after_bind(true)
             .descriptor_binding_partially_bound(true)
             .runtime_descriptor_array(true)
             .shader_sampled_image_array_non_uniform_indexing(true)
@@ -503,11 +505,7 @@ impl VulkanTempleRayTracedRenderer {
             }
         }
 
-        if self
-            .models
-            .iter()
-            .any(|m| m.model_changed_state())
-        {
+        if self.models.iter().any(|m| m.model_changed_state()) {
             unsafe {
                 self.device
                     .wait_for_fences(
@@ -668,26 +666,36 @@ impl VulkanTempleRayTracedRenderer {
         self.rt_descriptor_set
             .set_tlas(frame_data.tlas_builder.get_tlas().unwrap());
 
-        let mut primitives_info = Vec::new();
-        for model in self.models.iter() {
-            if let (Some(e1), Some(e2), Some(e3), Some(e4)) = (
-                model.get_vertices_addresses(),
-                model.get_indices_addresses(),
-                model.get_image_views(),
-                model.get_indices_size(),
-            ) {
-                itertools::izip!(e1, e2, e3, e4).for_each(|(e1, e2, e3, e4)| {
-                    primitives_info.push(DescriptorSetPrimitiveInfo {
-                        vertices_device_address: e1,
-                        indices_device_address: e2,
-                        single_index_size: e4,
-                        image_view: e3,
-                    });
-                });
-            }
-        }
-        self.rt_descriptor_set
-            .set_primitives_info(&primitives_info, cb);
+        let model_infos = self
+            .models
+            .iter()
+            .filter_map(|model| {
+                let primitives_info = {
+                    let e1 = model.get_vertices_addresses()?;
+                    let e2 = model.get_indices_addresses()?;
+                    let e3 = model.get_image_views()?;
+                    let e4 = model.get_indices_size()?;
+                    itertools::izip!(e1, e2, e3, e4)
+                        .map(|(e1, e2, e3, e4)| DescriptorSetPrimitiveInfo {
+                            vertices_device_address: e1,
+                            indices_device_address: e2,
+                            single_index_size: e4,
+                            image_view: e3,
+                        })
+                        .collect_vec()
+                };
+
+                let uniform_allocation = model.get_device_uniform_sub_allocation_data()?;
+
+                Some(DescriptorSetModelInfo {
+                    primitives_info,
+                    uniform_buffer: uniform_allocation.get_buffer(),
+                    uniform_buffer_offset: uniform_allocation.get_buffer_offset() as u64,
+                    uniform_buffer_size: uniform_allocation.get_size() as u64,
+                })
+            })
+            .collect_vec();
+        self.rt_descriptor_set.set_model_infos(&model_infos, cb);
 
         self.lights.update_host_and_device_buffer(cb);
 

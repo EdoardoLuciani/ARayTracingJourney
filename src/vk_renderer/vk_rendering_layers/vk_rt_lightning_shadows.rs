@@ -633,12 +633,11 @@ impl Drop for VkRTLightningShadows {
             ));
 
             self.device
-            .destroy_image_view(self.output_motion_vector_image_view, None);
+                .destroy_image_view(self.output_motion_vector_image_view, None);
             al.get_allocator_mut().destroy_image(std::mem::replace(
                 &mut self.output_motion_vector_image,
                 std::mem::zeroed(),
             ));
-
 
             self.device
                 .destroy_pipeline_layout(self.pipeline_layout, None);

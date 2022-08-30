@@ -349,9 +349,16 @@ impl VkModel {
             _ => state.to_storage(self),
         };
 
-        let state = self.state.as_ref().and_then(|state| state.as_any().downcast_ref::<Device>());
+        let state = self
+            .state
+            .as_ref()
+            .and_then(|state| state.as_any().downcast_ref::<Device>());
         if let Some(device_state) = state {
-            self.copy_uniform(&device_state.host_uniform_sub_allocation, cb, &device_state.device_uniform_sub_allocation);
+            self.copy_uniform(
+                &device_state.host_uniform_sub_allocation,
+                cb,
+                &device_state.device_uniform_sub_allocation,
+            );
         }
     }
 
@@ -413,6 +420,11 @@ impl VkModel {
         Some(blas_buffer)
     }
 
+    pub fn get_device_uniform_sub_allocation_data(&self) -> Option<&SubAllocationData> {
+        let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
+        Some(&device_state.device_uniform_sub_allocation)
+    }
+
     pub fn get_vertices_addresses(&self) -> Option<Vec<vk::DeviceAddress>> {
         let device_state = self.state.as_ref()?.as_any().downcast_ref::<Device>()?;
         Some(
@@ -471,9 +483,7 @@ impl VkModel {
 
     pub fn set_model_matrix(&mut self, matrix: Matrix3x4<f32>) {
         self.model_matrix = matrix;
-        self.model_bounding_sphere = self
-            .model_bounding_sphere
-            .transform(self.model_matrix);
+        self.model_bounding_sphere = self.model_bounding_sphere.transform(self.model_matrix);
     }
 
     fn copy_uniform(
@@ -886,7 +896,10 @@ impl VkModel {
                     .map(|elem| elem.image)
                     .collect::<Vec<_>>(),
             }));
-        (host_buffer_allocation, ModelCopyInfo::new(primitives_copy_data))
+        (
+            host_buffer_allocation,
+            ModelCopyInfo::new(primitives_copy_data),
+        )
     }
 
     fn create_blas(
