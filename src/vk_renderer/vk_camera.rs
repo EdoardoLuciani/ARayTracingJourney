@@ -17,6 +17,9 @@ struct Uniform {
     vp: Matrix4<f32>,
     prev_vp: Matrix4<f32>,
     camera_pos: Vector3<f32>,
+    pad: f32,
+    jitter: Vector2<f32>,
+    prev_jitter: Vector2<f32>
 }
 
 pub struct VkCamera {
@@ -28,8 +31,7 @@ pub struct VkCamera {
     fovy: f32,
     znear: f32,
     zfar: f32,
-    prev_view_mat: Matrix4<f32>,
-    prev_proj_mat: Matrix4<f32>,
+    jitter: Vector2<f32>,
     host_uniform_suballocation: SubAllocationData,
     uniform_descriptor_set_layout: vk::DescriptorSetLayout,
     uniform_descriptor_set_allocation: DescriptorSetAllocation,
@@ -99,14 +101,11 @@ impl VkCamera {
             fovy,
             znear,
             zfar,
-            prev_view_mat: Matrix4::<f32>::zeros(),
-            prev_proj_mat: Matrix4::<f32>::zeros(),
             host_uniform_suballocation,
             uniform_descriptor_set_layout,
             uniform_descriptor_set_allocation,
+            jitter: Vector2::<f32>::zeros(),
         };
-        ret.prev_view_mat = ret.view_matrix().to_homogeneous();
-        ret.prev_proj_mat = ret.perspective_matrix().to_homogeneous();
         ret
     }
 
@@ -114,29 +113,31 @@ impl VkCamera {
         let view = self.view_matrix();
         let view_mat = view.to_homogeneous();
 
-        let proj = self.perspective_matrix();
-        let proj_mat = proj.to_homogeneous();
+        let proj_mat = self.perspective_matrix();
 
-        let uniform = Uniform {
-            view: view_mat,
-            view_inv: view.inverse().to_homogeneous(),
-            prev_view: self.prev_view_mat,
-            proj: proj_mat,
-            proj_inv: proj.inverse(),
-            prev_proj: self.prev_proj_mat,
-            vp: view_mat * proj_mat,
-            prev_vp: self.prev_view_mat * self.prev_proj_mat,
-            camera_pos: self.pos,
-        };
         let uniform_host_ptr = self
             .host_uniform_suballocation
             .get_host_ptr()
             .unwrap()
             .as_ptr() as *mut Uniform;
-        unsafe { std::ptr::copy_nonoverlapping(&uniform, uniform_host_ptr, 1) }
+        unsafe {
+            (*uniform_host_ptr).prev_view = (*uniform_host_ptr).view;
+            (*uniform_host_ptr).prev_proj = (*uniform_host_ptr).proj;
+            (*uniform_host_ptr).prev_vp = (*uniform_host_ptr).vp;
+            (*uniform_host_ptr).prev_jitter = (*uniform_host_ptr).jitter;
 
-        self.prev_view_mat = view_mat;
-        self.prev_proj_mat = proj_mat;
+            (*uniform_host_ptr).view = view_mat;
+            (*uniform_host_ptr).view_inv = view.inverse().to_homogeneous();
+
+            (*uniform_host_ptr).proj = proj_mat;
+            (*uniform_host_ptr).proj_inv = proj_mat.try_inverse().unwrap();
+
+            (*uniform_host_ptr).vp = proj_mat * view_mat;
+
+            (*uniform_host_ptr).camera_pos = self.pos;
+
+            (*uniform_host_ptr).jitter = self.jitter;
+        }
     }
 
     pub fn set_pos(&mut self, pos: Vector3<f32>) {
@@ -161,6 +162,10 @@ impl VkCamera {
 
     pub fn set_zfar(&mut self, zfar: f32) {
         self.zfar = zfar;
+    }
+
+    pub fn set_jitter(&mut self, jitter: Vector2<f32>) {
+        self.jitter = jitter;
     }
 
     pub fn pos(&self) -> Vector3<f32> {
@@ -195,8 +200,8 @@ impl VkCamera {
         )
     }
 
-    pub fn perspective_matrix(&self) -> Perspective3<f32> {
-        Perspective3::new(self.aspect, self.fovy, self.znear, self.zfar)
+    pub fn perspective_matrix(&self) -> Matrix4<f32> {
+        Isometry3::translation(self.jitter.x, self.jitter.y, 0.0f32).to_homogeneous() * Perspective3::new(self.aspect, self.fovy, self.znear, self.zfar).to_homogeneous()
     }
 
     pub fn descriptor_set_layout(&self) -> vk::DescriptorSetLayout {

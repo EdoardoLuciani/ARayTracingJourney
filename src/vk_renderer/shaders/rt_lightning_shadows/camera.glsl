@@ -8,4 +8,7 @@ struct Camera {
     mat4 vp;
     mat4 prev_vp;
     vec3 camera_pos;
+    float pad;
+    vec2 jitter;
+    vec2 prev_jitter;
 };
