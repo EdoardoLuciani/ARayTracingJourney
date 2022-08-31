@@ -7,5 +7,5 @@
 layout(location = 0) rayPayloadInEXT HitPayload prd;
 
 void main() {
-    prd.primitive_info_idx = -1;
+    prd.instance_id = -1;
 }

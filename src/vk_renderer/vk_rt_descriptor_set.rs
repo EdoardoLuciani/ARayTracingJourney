@@ -12,16 +12,16 @@ pub struct VkRTDescriptorSet {
     device: Rc<ash::Device>,
     allocator: Rc<RefCell<VkAllocator>>,
     image_sampler: vk::Sampler,
-    model_info_host_allocation: SubAllocationData,
-    model_info_device_allocation: SubAllocationData,
+    primitive_info_host_allocation: SubAllocationData,
+    primitive_info_device_allocation: SubAllocationData,
     descriptor_set_layout: vk::DescriptorSetLayout,
     descriptor_set_allocation: DescriptorSetAllocation,
 }
 
 const DESCRIPTOR_SET_TLAS_BINDING: u32 = 0;
 const DESCRIPTOR_SET_PRIMITIVE_INFO_BUFFER_BINDING: u32 = 1;
-const DESCRIPTOR_SET_PRIMITIVE_INFO_IMAGES_BINDING: u32 = 2;
-const DESCRIPTOR_SET_PRIMITIVE_INFO_UNIFORMS_BINDING: u32 = 3;
+const DESCRIPTOR_SET_PRIMITIVES_IMAGES_BINDING: u32 = 2;
+const DESCRIPTOR_SET_MODEL_INFO_BUFFERS_BINDING: u32 = 3;
 
 pub struct DescriptorSetModelInfo {
     pub primitives_info: Vec<DescriptorSetPrimitiveInfo>,
@@ -80,14 +80,14 @@ impl VkRTDescriptorSet {
                     .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
                     .build(),
                 vk::DescriptorSetLayoutBinding::builder()
-                    .binding(DESCRIPTOR_SET_PRIMITIVE_INFO_IMAGES_BINDING)
+                    .binding(DESCRIPTOR_SET_PRIMITIVES_IMAGES_BINDING)
                     .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                     .descriptor_count(256)
                     .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
                     .immutable_samplers(&immutable_samplers)
                     .build(),
                 vk::DescriptorSetLayoutBinding::builder()
-                    .binding(DESCRIPTOR_SET_PRIMITIVE_INFO_UNIFORMS_BINDING)
+                    .binding(DESCRIPTOR_SET_MODEL_INFO_BUFFERS_BINDING)
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                     .descriptor_count(256)
                     .stage_flags(vk::ShaderStageFlags::RAYGEN_KHR)
@@ -98,7 +98,8 @@ impl VkRTDescriptorSet {
                 vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
                 vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
                     | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
-                vk::DescriptorBindingFlags::UPDATE_AFTER_BIND,
+                vk::DescriptorBindingFlags::UPDATE_AFTER_BIND
+                    | vk::DescriptorBindingFlags::PARTIALLY_BOUND,
             ];
             let mut descriptor_set_layout_binding_flags_ci =
                 vk::DescriptorSetLayoutBindingFlagsCreateInfo::builder()
@@ -117,12 +118,12 @@ impl VkRTDescriptorSet {
             .get_descriptor_set_allocator_mut()
             .allocate_descriptor_sets(&[descriptor_set_layout]);
 
-        let model_info_host_allocation = allocator
+        let primitive_info_host_allocation = allocator
             .as_ref()
             .borrow_mut()
             .get_host_uniform_sub_allocator_mut()
             .allocate(std::mem::size_of::<ShaderPrimitiveInfo>() * 16, 1);
-        let model_info_device_allocation = allocator
+        let primitive_info_device_allocation = allocator
             .as_ref()
             .borrow_mut()
             .get_device_uniform_sub_allocator_mut()
@@ -132,8 +133,8 @@ impl VkRTDescriptorSet {
             device,
             allocator,
             image_sampler,
-            model_info_host_allocation,
-            model_info_device_allocation,
+            primitive_info_host_allocation,
+            primitive_info_device_allocation,
             descriptor_set_layout,
             descriptor_set_allocation,
         }
@@ -185,15 +186,15 @@ impl VkRTDescriptorSet {
 
         let required_buffer_size =
             shader_primitive_infos.len() * std::mem::size_of::<ShaderPrimitiveInfo>();
-        if required_buffer_size > self.model_info_host_allocation.get_size() {
+        if required_buffer_size > self.primitive_info_host_allocation.get_size() {
             let mut al = self.allocator.as_ref().borrow_mut();
 
-            take_mut::take(&mut self.model_info_host_allocation, |allocation| {
+            take_mut::take(&mut self.primitive_info_host_allocation, |allocation| {
                 al.get_host_uniform_sub_allocator_mut().free(allocation);
                 al.get_host_uniform_sub_allocator_mut()
                     .allocate(required_buffer_size, 128)
             });
-            take_mut::take(&mut self.model_info_device_allocation, |allocation| {
+            take_mut::take(&mut self.primitive_info_device_allocation, |allocation| {
                 al.get_device_uniform_sub_allocator_mut().free(allocation);
                 al.get_device_uniform_sub_allocator_mut()
                     .allocate(required_buffer_size, 128)
@@ -203,7 +204,7 @@ impl VkRTDescriptorSet {
         unsafe {
             std::ptr::copy_nonoverlapping(
                 shader_primitive_infos.as_ptr(),
-                self.model_info_host_allocation
+                self.primitive_info_host_allocation
                     .get_host_ptr()
                     .unwrap()
                     .as_ptr() as *mut ShaderPrimitiveInfo,
@@ -215,12 +216,12 @@ impl VkRTDescriptorSet {
 
         unsafe {
             let buffer_region = vk::BufferCopy2::builder()
-                .src_offset(self.model_info_host_allocation.get_buffer_offset() as u64)
-                .dst_offset(self.model_info_device_allocation.get_buffer_offset() as u64)
-                .size(self.model_info_host_allocation.get_size() as u64);
+                .src_offset(self.primitive_info_host_allocation.get_buffer_offset() as u64)
+                .dst_offset(self.primitive_info_device_allocation.get_buffer_offset() as u64)
+                .size(self.primitive_info_host_allocation.get_size() as u64);
             let copy_buffer_info2 = vk::CopyBufferInfo2::builder()
-                .src_buffer(self.model_info_host_allocation.get_buffer())
-                .dst_buffer(self.model_info_device_allocation.get_buffer())
+                .src_buffer(self.primitive_info_host_allocation.get_buffer())
+                .dst_buffer(self.primitive_info_device_allocation.get_buffer())
                 .regions(std::slice::from_ref(&buffer_region));
             self.device.cmd_copy_buffer2(cb, &copy_buffer_info2);
 
@@ -229,9 +230,9 @@ impl VkRTDescriptorSet {
                 .src_access_mask(vk::AccessFlags2::NONE)
                 .dst_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
                 .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_READ)
-                .buffer(self.model_info_device_allocation.get_buffer())
-                .offset(self.model_info_device_allocation.get_buffer_offset() as u64)
-                .size(self.model_info_device_allocation.get_size() as u64);
+                .buffer(self.primitive_info_device_allocation.get_buffer())
+                .offset(self.primitive_info_device_allocation.get_buffer_offset() as u64)
+                .size(self.primitive_info_device_allocation.get_size() as u64);
             let dependency_info = vk::DependencyInfo::builder()
                 .buffer_memory_barriers(std::slice::from_ref(&buffer_memory_barriers));
             self.device.cmd_pipeline_barrier2(cb, &dependency_info);
@@ -240,9 +241,9 @@ impl VkRTDescriptorSet {
 
     fn update_primitives_info_descriptor_set(&self, model_info: &[DescriptorSetModelInfo]) {
         let descriptor_buffer_info = vk::DescriptorBufferInfo::builder()
-            .buffer(self.model_info_device_allocation.get_buffer())
-            .offset(self.model_info_device_allocation.get_buffer_offset() as u64)
-            .range(self.model_info_device_allocation.get_size() as u64);
+            .buffer(self.primitive_info_device_allocation.get_buffer())
+            .offset(self.primitive_info_device_allocation.get_buffer_offset() as u64)
+            .range(self.primitive_info_device_allocation.get_size() as u64);
 
         let descriptor_image_infos = model_info
             .iter()
@@ -274,14 +275,14 @@ impl VkRTDescriptorSet {
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.descriptor_set())
-                .dst_binding(DESCRIPTOR_SET_PRIMITIVE_INFO_IMAGES_BINDING)
+                .dst_binding(DESCRIPTOR_SET_PRIMITIVES_IMAGES_BINDING)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::COMBINED_IMAGE_SAMPLER)
                 .image_info(&descriptor_image_infos)
                 .build(),
             vk::WriteDescriptorSet::builder()
                 .dst_set(self.descriptor_set())
-                .dst_binding(DESCRIPTOR_SET_PRIMITIVE_INFO_UNIFORMS_BINDING)
+                .dst_binding(DESCRIPTOR_SET_MODEL_INFO_BUFFERS_BINDING)
                 .dst_array_element(0)
                 .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                 .buffer_info(&descriptor_buffer_uniform_infos)
@@ -309,12 +310,12 @@ impl Drop for VkRTDescriptorSet {
             self.device.destroy_sampler(self.image_sampler, None);
             al.get_host_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
-                    &mut self.model_info_host_allocation,
+                    &mut self.primitive_info_host_allocation,
                     std::mem::zeroed(),
                 ));
             al.get_device_uniform_sub_allocator_mut()
                 .free(std::mem::replace(
-                    &mut self.model_info_device_allocation,
+                    &mut self.primitive_info_device_allocation,
                     std::mem::zeroed(),
                 ));
         }

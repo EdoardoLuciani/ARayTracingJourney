@@ -290,7 +290,7 @@ pub struct VkModel {
     model_path: PathBuf,
     model_bounding_sphere: Sphere,
     uniform: VkModelUniform,
-    model_matrix: Matrix3x4<f32>,
+    model_matrix: Matrix4<f32>,
     state: Option<Box<dyn VkModelTransferLocation>>,
     model_changed_state: bool,
     post_cb_submit_cleanups: Vec<Box<dyn VkModelPostSubmissionCleanup>>,
@@ -298,8 +298,17 @@ pub struct VkModel {
 
 #[repr(C, packed)]
 struct VkModelUniform {
-    model_matrix: Matrix3x4<f32>,
-    prev_model_matrix: Matrix3x4<f32>,
+    model_matrix: Matrix4<f32>,
+    prev_model_matrix: Matrix4<f32>,
+}
+
+impl VkModelUniform {
+    pub fn new(model_matrix: Matrix4<f32>, prev_model_matrix: Matrix4<f32>) -> Self {
+        Self {
+            model_matrix,
+            prev_model_matrix,
+        }
+    }
 }
 
 impl VkModel {
@@ -308,7 +317,7 @@ impl VkModel {
         allocator: Rc<RefCell<VkAllocator>>,
         vk_blas_builder: Option<Rc<VkBlasBuilder>>,
         model_path: PathBuf,
-        model_matrix: Matrix3x4<f32>,
+        model_matrix: Matrix4<f32>,
     ) -> Self {
         let mut model = VkModel {
             device,
@@ -316,10 +325,7 @@ impl VkModel {
             allocator,
             model_path,
             model_bounding_sphere: Sphere::new(Vector3::zeros(), 0.0f32),
-            uniform: VkModelUniform {
-                model_matrix: model_matrix,
-                prev_model_matrix: Matrix3x4::zeros(),
-            },
+            uniform: VkModelUniform::new(model_matrix, Matrix4::zeros()),
             model_matrix,
             state: Some(Box::new(Storage {})),
             model_changed_state: false,
@@ -374,8 +380,7 @@ impl VkModel {
     }
 
     pub fn get_transform_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let m_matrix = self.model_matrix;
-        let row_matrix = m_matrix.transpose();
+        let row_matrix = self.model_matrix.fixed_slice::<3,4>(0, 0).transpose();
         let matrix: [f32; 12] = row_matrix.data.as_slice().try_into().unwrap();
         vk::TransformMatrixKHR { matrix }
     }
@@ -481,7 +486,7 @@ impl VkModel {
         )
     }
 
-    pub fn set_model_matrix(&mut self, matrix: Matrix3x4<f32>) {
+    pub fn set_model_matrix(&mut self, matrix: Matrix4<f32>) {
         self.model_matrix = matrix;
         self.model_bounding_sphere = self.model_bounding_sphere.transform(self.model_matrix);
     }

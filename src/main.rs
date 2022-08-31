@@ -8,7 +8,7 @@ use ash::vk;
 use nalgebra::*;
 use vk_renderer::lights::*;
 use vk_renderer::renderer::VulkanTempleRayTracedRenderer;
-use winit::event::{Event, WindowEvent};
+use winit::event::{Event, WindowEvent, DeviceEvent, ElementState};
 use winit::event_loop::ControlFlow;
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -31,8 +31,6 @@ fn main() {
         std::path::Path::new("assets/models/Sponza.glb"),
         Similarity3::from_scaling(2.0f32)
             .to_homogeneous()
-            .fixed_slice::<3, 4>(0, 0)
-            .into_owned(),
     );
 
     renderer
@@ -75,32 +73,6 @@ fn main() {
                 WindowEvent::CloseRequested => {
                     *control_flow = ControlFlow::Exit;
                 }
-                WindowEvent::KeyboardInput { input, .. } => {
-                    let mut camera_pos_diff = Vector3::from_element(0.0f32);
-                    const SPEED: f32 = 0.002f32;
-                    match input.virtual_keycode {
-                        Some(winit::event::VirtualKeyCode::W) => camera_pos_diff[2] = -SPEED,
-                        Some(winit::event::VirtualKeyCode::S) => camera_pos_diff[2] = SPEED,
-                        Some(winit::event::VirtualKeyCode::D) => camera_pos_diff[0] = SPEED,
-                        Some(winit::event::VirtualKeyCode::A) => camera_pos_diff[0] = -SPEED,
-                        Some(winit::event::VirtualKeyCode::LControl) => camera_pos_diff[1] = SPEED,
-                        Some(winit::event::VirtualKeyCode::LShift) => camera_pos_diff[1] = -SPEED,
-                        Some(winit::event::VirtualKeyCode::Escape) => {
-                            *control_flow = ControlFlow::Exit
-                        }
-                        _ => {}
-                    }
-                    let new_pos = renderer.camera_mut().pos()
-                        + renderer
-                            .camera_mut()
-                            .view_matrix()
-                            .to_homogeneous()
-                            .transpose()
-                            .fixed_slice::<3, 3>(0, 0)
-                            * camera_pos_diff
-                            * clock.elapsed().as_millis() as f32;
-                    renderer.camera_mut().set_pos(new_pos);
-                }
                 WindowEvent::Resized(physical_size) => {
                     renderer
                         .camera_mut()
@@ -108,21 +80,49 @@ fn main() {
                 }
                 _ => {}
             },
-            Event::DeviceEvent {
-                event: winit::event::DeviceEvent::MouseMotion { delta },
-                ..
-            } => {
-                const SENSITIVITY: f32 = 0.002f32;
-                camera_virtual_pos += Vector2::new(-delta.1 as f32, delta.0 as f32) * SENSITIVITY;
+            Event::DeviceEvent { event, .. } => match event {
+                DeviceEvent::MouseMotion { delta, .. } => {
+                    const SENSITIVITY: f32 = 0.002f32;
+                    camera_virtual_pos += Vector2::new(-delta.1 as f32, delta.0 as f32) * SENSITIVITY;
 
-                let mut euclidian_dir = Vector3::new(
-                    camera_virtual_pos.x.cos() * camera_virtual_pos.y.sin(),
-                    camera_virtual_pos.x.sin(),
-                    camera_virtual_pos.x.cos() * camera_virtual_pos.y.cos(),
-                );
-                euclidian_dir.normalize_mut();
+                    let mut euclidian_dir = Vector3::new(
+                        camera_virtual_pos.x.cos() * camera_virtual_pos.y.sin(),
+                        camera_virtual_pos.x.sin(),
+                        camera_virtual_pos.x.cos() * camera_virtual_pos.y.cos(),
+                    );
+                    euclidian_dir.normalize_mut();
+                    renderer.camera_mut().set_dir(euclidian_dir);
+                }
+                DeviceEvent::Key( keyboard_input ) => {
+                        let mut camera_pos_diff = Vector3::from_element(0.0f32);
+                        const SPEED: f32 = 0.002f32;
 
-                renderer.camera_mut().set_dir(euclidian_dir);
+                        if keyboard_input.state == ElementState::Pressed {
+                            match keyboard_input.scancode {
+                                0x11 => camera_pos_diff[2] = -SPEED, // W
+                                0x1f => camera_pos_diff[2] = SPEED, // S
+                                0x20 => camera_pos_diff[0] = SPEED, // D
+                                0x1e => camera_pos_diff[0] = -SPEED, // A
+                                0x1d => camera_pos_diff[1] = SPEED, // LControl
+                                0x2a => camera_pos_diff[1] = -SPEED, // LShift
+                                0x01 => { // Esc
+                                    *control_flow = ControlFlow::Exit
+                                }
+                                _ => {}
+                            }
+                        }
+                        let new_pos = renderer.camera_mut().pos()
+                            + renderer
+                                .camera_mut()
+                                .view_matrix()
+                                .to_homogeneous()
+                                .transpose()
+                                .fixed_slice::<3, 3>(0, 0)
+                                * camera_pos_diff
+                                * clock.elapsed().as_millis() as f32;
+                        renderer.camera_mut().set_pos(new_pos);
+                },
+                _ => {}
             }
             Event::MainEventsCleared => {
                 clock = std::time::Instant::now();

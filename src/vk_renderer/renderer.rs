@@ -170,6 +170,7 @@ impl VulkanTempleRayTracedRenderer {
             .runtime_descriptor_array(true)
             .shader_sampled_image_array_non_uniform_indexing(true)
             .shader_storage_image_array_non_uniform_indexing(true)
+            .shader_uniform_buffer_array_non_uniform_indexing(true)
             .shader_float16(true);
         let mut vulkan_13_features =
             vk::PhysicalDeviceVulkan13Features::builder().synchronization2(true);
@@ -360,7 +361,7 @@ impl VulkanTempleRayTracedRenderer {
         rtr
     }
 
-    pub fn add_model(&mut self, file_path: &std::path::Path, model_matrix: Matrix3x4<f32>) {
+    pub fn add_model(&mut self, file_path: &std::path::Path, model_matrix: Matrix4<f32>) {
         self.models.push(VkModel::new(
             self.device.clone(),
             self.allocator.clone(),

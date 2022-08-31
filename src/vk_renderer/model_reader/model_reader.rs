@@ -125,17 +125,16 @@ impl Sphere {
         (self.center - point).magnitude() - self.radius
     }
 
-    pub fn transform(&self, m_transform: Matrix3x4<f32>) -> Sphere {
+    pub fn transform(&self, m_transform: Matrix4<f32>) -> Sphere {
         let center = Vector4::<f32>::new(self.center.x, self.center.y, self.center.z, 1.0f32);
 
-        let vec_scale2 = Vector3::new(
-            m_transform.column(0).magnitude(),
-            m_transform.column(1).magnitude(),
-            m_transform.column(2).magnitude(),
-        );
-        let max_scale = vec_scale2.max();
+        let max_scale = Vector3::new(
+            m_transform.column(0).magnitude_squared(),
+            m_transform.column(1).magnitude_squared(),
+            m_transform.column(2).magnitude_squared(),
+        ).max().sqrt();
         Sphere {
-            center: (m_transform * center),
+            center: (m_transform * center).xyz(),
             radius: max_scale * self.radius,
         }
     }

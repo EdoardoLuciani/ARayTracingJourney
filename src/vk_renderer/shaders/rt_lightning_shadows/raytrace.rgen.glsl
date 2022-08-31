@@ -11,13 +11,14 @@
 #include "../brdfs.glsl"
 #include "light.glsl"
 #include "camera.glsl"
+#include "model_uniform.glsl"
 
 layout(binding = 0, set = 0, rgba32f) uniform image2D image;
 layout(binding = 1, set = 0, r16f) uniform image2D depth_image;
 layout(binding = 2, set = 0, r11f_g11f_b10f) uniform image2D normal_image;
+layout(binding = 3, set = 0, rg16f) uniform image2D motion_vector_image;
 
 layout(binding = 0, set = 1) uniform accelerationStructureEXT topLevelAS;
-
 struct PrimitiveInfo {
     uint64_t vertices_address;
     uint64_t indices_address;
@@ -26,6 +27,9 @@ struct PrimitiveInfo {
 };
 layout(binding = 1, set = 1, scalar) readonly buffer PrimitiveInfos { PrimitiveInfo primitive_infos[]; };
 layout(binding = 2, set = 1) uniform sampler2DArray textures[];
+layout(binding = 3, set = 1) uniform ModelUniforms { 
+    ModelUniform model_uniform;
+} model_uniforms[];
 
 layout(binding = 0, set = 2) uniform CameraUniform {
     Camera camera;
@@ -100,7 +104,8 @@ void main() {
     float out_depth = 10000.0;
     vec3 out_color = vec3(0.0);
     vec3 out_normal = vec3(0.5);
-    if (hit_payload.primitive_info_idx >= 0) {
+    vec2 out_motion_vector = vec2(0.0);
+    if (hit_payload.instance_id >= 0) {
         PrimitiveInfo primitive_info = primitive_infos[hit_payload.primitive_info_idx];
 
         uvec3 indices = get_indices(primitive_info, hit_payload.primitive_id);
@@ -188,9 +193,14 @@ void main() {
         out_normal = mat3(transpose(camera.view_inv)) * N;
         out_normal.yz = -out_normal.yz;
         out_normal = normalize(out_normal) * 0.5 + 0.5;
+
+        vec4 current_pos = camera.proj * camera.view * vec4(world_pos, 1.0);
+        vec4 prev_pos = camera.prev_proj * camera.prev_view * model_uniforms[nonuniformEXT(hit_payload.instance_id)].model_uniform.prev_matrix * vec4(pos, 1.0);
+        out_motion_vector = (current_pos.xy / current_pos.w) - (prev_pos.xy / prev_pos.w);
     }
 
-    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 1.0));
+    imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 0.0));
     imageStore(depth_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_depth));
-    imageStore(normal_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 1.0));
+    imageStore(normal_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_normal, 0.0));
+    imageStore(motion_vector_image, ivec2(gl_LaunchIDEXT.xy), vec4(out_motion_vector, 0.0, 0.0));
 }
