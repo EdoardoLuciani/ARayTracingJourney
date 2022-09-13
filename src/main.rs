@@ -7,7 +7,7 @@ use crate::window_manager::WindowManager;
 use ash::vk;
 use nalgebra::*;
 use vk_renderer::lights::*;
-use vk_renderer::renderer::VulkanTempleRayTracedRenderer;
+use vk_renderer::renderer::*;
 use winit::event::{Event, WindowEvent, DeviceEvent, ElementState};
 use winit::event_loop::ControlFlow;
 use winit::platform::run_return::EventLoopExtRunReturn;
@@ -26,6 +26,9 @@ fn main() {
             height: window_size.1,
         },
         (window.get_window_handle(), window.get_display_handle()),
+        Settings {
+            upscaling_quality: UpscalingQuality::QUALITY
+        }
     );
     renderer.add_model(
         std::path::Path::new("assets/models/Sponza.glb"),

@@ -141,7 +141,7 @@ impl VkRTLightningShadows {
             &mut self.allocator.as_ref().borrow_mut().get_allocator_mut(),
             rendering_resolution,
             output_image_format,
-            vk::ImageUsageFlags::STORAGE,
+            vk::ImageUsageFlags::STORAGE | vk::ImageUsageFlags::SAMPLED,
             &mut self.output_image,
             &mut self.output_image_view,
         );

@@ -164,7 +164,7 @@ impl VkCamera {
         self.zfar = zfar;
     }
 
-    pub fn set_jitter(&mut self, jitter: Vector2<f32>) {
+    pub fn set_pixel_jitter(&mut self, jitter: Vector2<f32>) {
         self.jitter = jitter;
     }
 
@@ -201,7 +201,7 @@ impl VkCamera {
     }
 
     pub fn perspective_matrix(&self) -> Matrix4<f32> {
-        Isometry3::translation(self.jitter.x, self.jitter.y, 0.0f32).to_homogeneous() * Perspective3::new(self.aspect, self.fovy, self.znear, self.zfar).to_homogeneous()
+        Perspective3::new(self.aspect, self.fovy, self.znear, self.zfar).to_homogeneous()
     }
 
     pub fn descriptor_set_layout(&self) -> vk::DescriptorSetLayout {

@@ -30,8 +30,8 @@ void main() {
     ivec2 global_coords = ivec2(gl_GlobalInvocationID.xy);
 
     vec3 color = imageLoad(input_color, global_coords).rgb;
-    float ao = float(imageLoad(global_ao, global_coords).r) / 255.0;
-    color *= ao;
+    //float ao = float(imageLoad(global_ao, global_coords).r) / 255.0;
+    //color *= ao;
 
     LpmFilter(color.r,color.g,color.b,false,LPM_CONFIG_709_709);
     color = rgb_to_srgb_approx(color);

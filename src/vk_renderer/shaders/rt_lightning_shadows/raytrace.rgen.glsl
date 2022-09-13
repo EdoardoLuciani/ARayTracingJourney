@@ -76,11 +76,11 @@ Vertex vertex_data_to_vertex(VertexData vertex_data) {
 }
 
 void main() {
-    const vec2 pixel_center = vec2(gl_LaunchIDEXT.xy) + vec2(0.5);
+    const vec2 pixel_center = vec2(gl_LaunchIDEXT.xy) + vec2(0.5) + camera.jitter;
     const vec2 in_uv = pixel_center/vec2(gl_LaunchSizeEXT.xy);
     vec2 d = in_uv * 2.0 - 1.0;
 
-    vec4 origin    = camera.view_inv * vec4(0, 0, 0, 1);
+    vec3 origin    = camera.camera_pos;
     vec4 target    = camera.proj_inv * vec4(d.x, d.y, 1, 1);
     vec4 direction = camera.view_inv * vec4(normalize(target.xyz), 0);
 
@@ -94,7 +94,7 @@ void main() {
               0,              // sbtRecordOffset
               0,              // sbtRecordStride
               0,              // missIndex
-              origin.xyz,     // ray origin
+              origin,     // ray origin
               t_min,           // ray min range
               direction.xyz,  // ray direction
               t_max,           // ray max range
@@ -194,9 +194,12 @@ void main() {
         out_normal.yz = -out_normal.yz;
         out_normal = normalize(out_normal) * 0.5 + 0.5;
 
-        vec4 current_pos = camera.proj * camera.view * vec4(world_pos, 1.0);
-        vec4 prev_pos = camera.prev_proj * camera.prev_view * model_uniforms[nonuniformEXT(hit_payload.instance_id)].model_uniform.prev_matrix * vec4(pos, 1.0);
-        out_motion_vector = (current_pos.xy / current_pos.w) - (prev_pos.xy / prev_pos.w);
+        vec4 current_pos = camera.vp * vec4(world_pos, 1.0);
+        vec4 prev_pos = camera.prev_vp * model_uniforms[nonuniformEXT(hit_payload.instance_id)].model_uniform.prev_matrix * vec4(pos, 1.0);
+
+        vec2 cancel_jitter = camera.prev_jitter - camera.jitter;
+        out_motion_vector = (prev_pos.xy / prev_pos.w) - (current_pos.xy / current_pos.w);
+        out_motion_vector *= vec2(0.5, 0.5);
     }
 
     imageStore(image, ivec2(gl_LaunchIDEXT.xy), vec4(out_color, 0.0));

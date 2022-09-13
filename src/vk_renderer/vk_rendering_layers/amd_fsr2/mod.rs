@@ -10,21 +10,6 @@ use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
 
-pub struct AmdFsr2QualityLevel(f32);
-impl AmdFsr2QualityLevel {
-    pub const QUALITY: Self = Self(1.5f32);
-    pub const BALANCED: Self = Self(1.7f32);
-    pub const PERFORMANCE: Self = Self(2.0f32);
-    pub const ULTRA_PERFORMANCE: Self = Self(3.0f32);
-
-    pub fn get_recommended_input_res(&self, output_res: vk::Extent2D) -> vk::Extent2D {
-        vk::Extent2D {
-            width: (output_res.width as f32 / self.0) as u32,
-            height: (output_res.height as f32 / self.0) as u32,
-        }
-    }
-}
-
 pub struct AmdFsr2 {
     device: Rc<ash::Device>,
     allocator: Rc<RefCell<VkAllocator>>,
@@ -39,6 +24,8 @@ pub struct AmdFsr2 {
     input_color_image_view: vk::ImageView,
     input_depth_image: vk::Image,
     input_depth_image_view: vk::ImageView,
+    input_motion_vector_image: vk::Image,
+    input_motion_vector_image_view: vk::ImageView,
     output_image: ImageAllocation,
     output_image_view: vk::ImageView,
 }
@@ -56,11 +43,12 @@ impl AmdFsr2 {
         input_color_image_view: vk::ImageView,
         input_depth_image: vk::Image,
         input_depth_image_view: vk::ImageView,
+        input_motion_vector_image: vk::Image,
+        input_motion_vector_image_view: vk::ImageView,
     ) -> Self {
         let mut context_description = unsafe {
             FfxFsr2ContextDescription {
-                flags: FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE
-                    | FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_DEPTH_INFINITE,
+                flags: (FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_AUTO_EXPOSURE) as u32,
                 maxRenderSize: FfxDimensions2D::default(),
                 displaySize: FfxDimensions2D::default(),
                 callbacks: std::mem::zeroed(),
@@ -108,6 +96,8 @@ impl AmdFsr2 {
                 input_color_image_view,
                 input_depth_image,
                 input_depth_image_view,
+                input_motion_vector_image,
+                input_motion_vector_image_view,
                 output_image: std::mem::zeroed(),
                 output_image_view: vk::ImageView::null(),
             }
@@ -120,6 +110,8 @@ impl AmdFsr2 {
             input_color_image_view,
             input_depth_image,
             input_depth_image_view,
+            input_motion_vector_image,
+            input_motion_vector_image_view
         );
 
         ret
@@ -133,6 +125,8 @@ impl AmdFsr2 {
         input_color_image_view: vk::ImageView,
         input_depth_image: vk::Image,
         input_depth_image_view: vk::ImageView,
+        input_motion_vector_image: vk::Image,
+        input_motion_vector_image_view: vk::ImageView,
     ) {
         unsafe {
             if self.context_description.maxRenderSize != FfxDimensions2D::default() {
@@ -149,7 +143,7 @@ impl AmdFsr2 {
             };
 
             ffxFsr2ContextCreate(&mut self.context, &self.context_description);
-
+        }
             take_mut::take(&mut self.output_image, |image| {
                 self.allocator
                     .as_ref()
@@ -179,29 +173,30 @@ impl AmdFsr2 {
                     .allocate_image(&image_ci, MemoryLocation::GpuOnly)
             });
 
-            unsafe {
-                self.device.destroy_image_view(self.output_image_view, None);
-
-                let image_view_ci = vk::ImageViewCreateInfo::builder()
-                    .image(self.output_image.get_image())
-                    .view_type(vk::ImageViewType::TYPE_2D)
-                    .format(vk::Format::B10G11R11_UFLOAT_PACK32)
-                    .components(vk::ComponentMapping::default())
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    });
-                self.output_image_view =
-                    self.device.create_image_view(&image_view_ci, None).unwrap();
-            }
+        unsafe {
+            self.device.destroy_image_view(self.output_image_view, None);
+            let image_view_ci = vk::ImageViewCreateInfo::builder()
+                .image(self.output_image.get_image())
+                .view_type(vk::ImageViewType::TYPE_2D)
+                .format(vk::Format::B10G11R11_UFLOAT_PACK32)
+                .components(vk::ComponentMapping::default())
+                .subresource_range(vk::ImageSubresourceRange {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    base_mip_level: 0,
+                    level_count: 1,
+                    base_array_layer: 0,
+                    layer_count: 1,
+                });
+            self.output_image_view =
+                self.device.create_image_view(&image_view_ci, None).unwrap();
         }
+
         self.input_color_image = input_color_image;
         self.input_color_image_view = input_color_image_view;
         self.input_depth_image = input_depth_image;
         self.input_depth_image_view = input_depth_image_view;
+        self.input_motion_vector_image = input_motion_vector_image;
+        self.input_motion_vector_image_view = input_motion_vector_image_view;
     }
 
     pub fn update_proj_jitter(&mut self) -> Vector2<f32> {
@@ -221,6 +216,14 @@ impl AmdFsr2 {
         self.proj_jitter
     }
 
+    pub fn get_output_image(&self) -> vk::Image {
+        self.output_image.get_image()
+    }
+
+    pub fn get_output_image_view(&self) -> vk::ImageView {
+        self.output_image_view
+    }
+
     pub fn upscale(
         &mut self,
         cb: vk::CommandBuffer,
@@ -232,7 +235,7 @@ impl AmdFsr2 {
         let image_memory_barriers = [
             vk::ImageMemoryBarrier2::builder()
                 .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
                 .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                 .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
                 .old_layout(vk::ImageLayout::GENERAL)
@@ -248,12 +251,12 @@ impl AmdFsr2 {
                 .build(),
             vk::ImageMemoryBarrier2::builder()
                 .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
+                .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
                 .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                 .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
                 .old_layout(vk::ImageLayout::GENERAL)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
-                .image(self.input_depth_image)
+                .image(self.input_motion_vector_image)
                 .subresource_range(vk::ImageSubresourceRange {
                     aspect_mask: vk::ImageAspectFlags::COLOR,
                     base_mip_level: 0,
@@ -292,7 +295,7 @@ impl AmdFsr2 {
                     std::mem::transmute(self.input_color_image_view),
                     self.context_description.maxRenderSize.width,
                     self.context_description.maxRenderSize.height,
-                    vk::Format::B10G11R11_UFLOAT_PACK32.as_raw() as u32,
+                    vk::Format::B10G11R11_UFLOAT_PACK32.as_raw(),
                     std::ptr::null_mut(),
                     FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
                 ),
@@ -302,18 +305,27 @@ impl AmdFsr2 {
                     std::mem::transmute(self.input_depth_image_view),
                     self.context_description.maxRenderSize.width,
                     self.context_description.maxRenderSize.height,
-                    vk::Format::R16_SFLOAT.as_raw() as u32,
+                    vk::Format::R16_SFLOAT.as_raw(),
                     std::ptr::null_mut(),
                     FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
                 ),
-                motionVectors: todo!(),
+                motionVectors: ffxGetTextureResourceVK(
+                    &mut self.context,
+                    std::mem::transmute(self.input_motion_vector_image),
+                    std::mem::transmute(self.input_motion_vector_image_view),
+                    self.context_description.maxRenderSize.width,
+                    self.context_description.maxRenderSize.height,
+                    vk::Format::R16G16_SFLOAT.as_raw(),
+                    std::ptr::null_mut(),
+                    FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
+                ),
                 exposure: ffxGetTextureResourceVK(
                     &mut self.context,
                     std::mem::transmute(0u64),
                     std::mem::transmute(0u64),
                     1,
                     1,
-                    vk::Format::UNDEFINED.as_raw() as u32,
+                    vk::Format::UNDEFINED.as_raw(),
                     std::ptr::null_mut(),
                     FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
                 ),
@@ -323,7 +335,7 @@ impl AmdFsr2 {
                     std::mem::transmute(0u64),
                     1,
                     1,
-                    vk::Format::UNDEFINED.as_raw() as u32,
+                    vk::Format::UNDEFINED.as_raw(),
                     std::ptr::null_mut(),
                     FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
                 ),
@@ -333,7 +345,7 @@ impl AmdFsr2 {
                     std::mem::transmute(0u64),
                     1,
                     1,
-                    vk::Format::UNDEFINED.as_raw() as u32,
+                    vk::Format::UNDEFINED.as_raw(),
                     std::ptr::null_mut(),
                     FfxResourceStates_FFX_RESOURCE_STATE_COMPUTE_READ,
                 ),
@@ -343,7 +355,7 @@ impl AmdFsr2 {
                     std::mem::transmute(self.output_image_view),
                     self.context_description.displaySize.width,
                     self.context_description.displaySize.height,
-                    vk::Format::B10G11R11_UFLOAT_PACK32.as_raw() as u32,
+                    vk::Format::B10G11R11_UFLOAT_PACK32.as_raw(),
                     std::ptr::null_mut(),
                     FfxResourceStates_FFX_RESOURCE_STATE_UNORDERED_ACCESS,
                 ),
@@ -358,7 +370,7 @@ impl AmdFsr2 {
                 renderSize: self.context_description.maxRenderSize,
                 enableSharpening: false,
                 sharpness: 1.0f32,
-                frameTimeDelta: self.last_frame_time.elapsed().as_millis() as f32,
+                frameTimeDelta: self.last_frame_time.elapsed().as_secs_f32() * 1000.0f32,
                 preExposure: 1.0f32,
                 reset,
                 cameraNear: camera_near,
@@ -375,6 +387,8 @@ impl Drop for AmdFsr2 {
     fn drop(&mut self) {
         unsafe {
             ffxFsr2ContextDestroy(&mut self.context);
-        }
+            self.device.destroy_image_view(self.output_image_view, None);
+            self.allocator.as_ref().borrow_mut().get_allocator_mut().destroy_image(std::mem::replace(&mut self.output_image, std::mem::zeroed()))        
+        };
     }
 }
