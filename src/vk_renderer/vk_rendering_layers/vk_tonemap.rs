@@ -1,9 +1,12 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
+
 use super::super::vk_allocator::vk_descriptor_sets_allocator::*;
 use super::super::vk_allocator::VkAllocator;
 use super::super::vk_boot::helper::vk_create_shader_stage;
 use crate::vk_renderer::vk_allocator::vk_buffers_suballocator::SubAllocationData;
 use ash::vk;
-use itertools::{all, Itertools};
+use itertools::Itertools;
 use nalgebra::*;
 use std::cell::RefCell;
 use std::path::Path;
@@ -181,7 +184,7 @@ impl LpmData {
         let lumaW = rgbToXyzW.row(1) * (rgbToXyzW.m21 + rgbToXyzW.m22 + rgbToXyzW.m23).recip();
 
         let rgbToXyz0 = LpmColRgbToXyz(xyRedO, xyGreenO, xyBlueO, xyWhiteO);
-        let mut lumaT = if (soft) {
+        let mut lumaT = if soft {
             rgbToXyz0.row(1).clone_owned()
         } else {
             rgbToXyzW.row(1).clone_owned()
@@ -205,7 +208,7 @@ impl LpmData {
             Matrix3::zeros()
         };
 
-        let mut con2_m = if (con2) {
+        let mut con2_m = if con2 {
             let xyzToRgbC = LpmColRgbToXyz(xyRedC, xyGreenC, xyBlueC, xyWhiteC)
                 .try_inverse()
                 .unwrap();
@@ -216,7 +219,7 @@ impl LpmData {
             Matrix3::zeros()
         };
 
-        if (scaleOnly) {
+        if scaleOnly {
             con2_m.m11 = scaleC;
         }
 
