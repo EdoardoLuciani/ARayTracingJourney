@@ -12,6 +12,4 @@ void main() {
     prd.primitive_id = gl_PrimitiveID;
     prd.instance_id = gl_InstanceID;
     prd.hit_attribs = attribs;
-    prd.object_to_world = gl_ObjectToWorldEXT;
-    prd.world_to_object = gl_WorldToObjectEXT;
 }

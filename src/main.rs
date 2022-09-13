@@ -27,7 +27,7 @@ fn main() {
         },
         (window.get_window_handle(), window.get_display_handle()),
         Settings {
-            upscaling_quality: UpscalingQuality::QUALITY
+            upscaling_quality: UpscalingQuality::NATIVE
         }
     );
     renderer.add_model(

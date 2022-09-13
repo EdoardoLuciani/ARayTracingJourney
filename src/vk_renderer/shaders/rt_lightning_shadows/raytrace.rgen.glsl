@@ -118,15 +118,15 @@ void main() {
         const vec3 barycentrics = vec3(1.0 - hit_payload.hit_attribs.x - hit_payload.hit_attribs.y, hit_payload.hit_attribs.x, hit_payload.hit_attribs.y);
 
         vec3 pos = v0.pos * barycentrics.x + v1.pos * barycentrics.y + v2.pos * barycentrics.z;
-        vec3 world_pos = vec3(hit_payload.object_to_world * vec4(pos,1.0f));
+        vec3 world_pos = vec3(model_uniforms[nonuniformEXT(hit_payload.instance_id)].model_uniform.matrix * vec4(pos,1.0f));
 
         vec2 tex_coord = v0.tex_coord * barycentrics.x + v1.tex_coord * barycentrics.y + v2.tex_coord * barycentrics.z;
 
         vec3 normal      = normalize(v0.normal * barycentrics.x + v1.normal * barycentrics.y + v2.normal * barycentrics.z);
-        vec3 world_normal = normalize(vec3(normal * hit_payload.world_to_object));
+        vec3 world_normal = normalize(mat3(model_uniforms[nonuniformEXT(hit_payload.instance_id)].model_uniform.trans_inv_matrix) * normal);
 
         vec3 tangent = normalize(v0.tangent.xyz * barycentrics.x + v1.tangent.xyz * barycentrics.y + v2.tangent.xyz * barycentrics.z);
-        vec3 world_tangent = normalize(vec3(mat4(hit_payload.object_to_world) * vec4(tangent.xyz, 0)));
+        vec3 world_tangent = normalize(mat3(model_uniforms[nonuniformEXT(hit_payload.instance_id)].model_uniform.trans_inv_matrix) * tangent);
         world_tangent = normalize(world_tangent - dot(world_tangent, world_normal) * world_normal);
         vec3 world_binormal = cross(world_normal, world_tangent) * v0.tangent.w;
 

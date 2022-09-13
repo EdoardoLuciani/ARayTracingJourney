@@ -300,13 +300,15 @@ pub struct VkModel {
 struct VkModelUniform {
     model_matrix: Matrix4<f32>,
     prev_model_matrix: Matrix4<f32>,
+    model_trans_inv_matrix: Matrix4<f32>,
 }
 
 impl VkModelUniform {
-    pub fn new(model_matrix: Matrix4<f32>, prev_model_matrix: Matrix4<f32>) -> Self {
+    pub fn new(model_matrix: Matrix4<f32>, prev_model_matrix: Matrix4<f32>, model_trans_inv_matrix: Matrix4<f32>) -> Self {
         Self {
             model_matrix,
             prev_model_matrix,
+            model_trans_inv_matrix
         }
     }
 }
@@ -325,7 +327,7 @@ impl VkModel {
             allocator,
             model_path,
             model_bounding_sphere: Sphere::new(Vector3::zeros(), 0.0f32),
-            uniform: VkModelUniform::new(model_matrix, Matrix4::zeros()),
+            uniform: VkModelUniform::new(model_matrix, Matrix4::zeros(), model_matrix.try_inverse().unwrap()),
             model_matrix,
             state: Some(Box::new(Storage {})),
             model_changed_state: false,
@@ -347,6 +349,7 @@ impl VkModel {
 
         self.uniform.prev_model_matrix = self.uniform.model_matrix;
         self.uniform.model_matrix = self.model_matrix;
+        self.uniform.model_trans_inv_matrix = self.model_matrix.try_inverse().unwrap().transpose();
 
         let state = self.state.take().unwrap();
         match distance {
