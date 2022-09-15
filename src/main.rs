@@ -8,7 +8,7 @@ use ash::vk;
 use nalgebra::*;
 use vk_renderer::lights::*;
 use vk_renderer::renderer::*;
-use winit::event::{Event, WindowEvent, DeviceEvent, ElementState};
+use winit::event::{DeviceEvent, ElementState, Event, WindowEvent};
 use winit::event_loop::ControlFlow;
 use winit::platform::run_return::EventLoopExtRunReturn;
 
@@ -27,13 +27,12 @@ fn main() {
         },
         (window.get_window_handle(), window.get_display_handle()),
         Settings {
-            upscaling_quality: UpscalingQuality::NATIVE
-        }
+            upscaling_quality: UpscalingQuality::QUALITY,
+        },
     );
     renderer.add_model(
         std::path::Path::new("assets/models/Sponza.glb"),
-        Similarity3::from_scaling(2.0f32)
-            .to_homogeneous()
+        Similarity3::from_scaling(2.0f32).to_homogeneous(),
     );
 
     renderer
@@ -86,7 +85,8 @@ fn main() {
             Event::DeviceEvent { event, .. } => match event {
                 DeviceEvent::MouseMotion { delta, .. } => {
                     const SENSITIVITY: f32 = 0.002f32;
-                    camera_virtual_pos += Vector2::new(-delta.1 as f32, delta.0 as f32) * SENSITIVITY;
+                    camera_virtual_pos +=
+                        Vector2::new(-delta.1 as f32, delta.0 as f32) * SENSITIVITY;
 
                     let mut euclidian_dir = Vector3::new(
                         camera_virtual_pos.x.cos() * camera_virtual_pos.y.sin(),
@@ -96,37 +96,38 @@ fn main() {
                     euclidian_dir.normalize_mut();
                     renderer.camera_mut().set_dir(euclidian_dir);
                 }
-                DeviceEvent::Key( keyboard_input ) => {
-                        let mut camera_pos_diff = Vector3::from_element(0.0f32);
-                        const SPEED: f32 = 0.002f32;
+                DeviceEvent::Key(keyboard_input) => {
+                    let mut camera_pos_diff = Vector3::from_element(0.0f32);
+                    const SPEED: f32 = 0.002f32;
 
-                        if keyboard_input.state == ElementState::Pressed {
-                            match keyboard_input.scancode {
-                                0x11 => camera_pos_diff[2] = -SPEED, // W
-                                0x1f => camera_pos_diff[2] = SPEED, // S
-                                0x20 => camera_pos_diff[0] = SPEED, // D
-                                0x1e => camera_pos_diff[0] = -SPEED, // A
-                                0x1d => camera_pos_diff[1] = SPEED, // LControl
-                                0x2a => camera_pos_diff[1] = -SPEED, // LShift
-                                0x01 => { // Esc
-                                    *control_flow = ControlFlow::Exit
-                                }
-                                _ => {}
+                    if keyboard_input.state == ElementState::Pressed {
+                        match keyboard_input.scancode {
+                            0x11 => camera_pos_diff[2] = -SPEED, // W
+                            0x1f => camera_pos_diff[2] = SPEED,  // S
+                            0x20 => camera_pos_diff[0] = SPEED,  // D
+                            0x1e => camera_pos_diff[0] = -SPEED, // A
+                            0x1d => camera_pos_diff[1] = SPEED,  // LControl
+                            0x2a => camera_pos_diff[1] = -SPEED, // LShift
+                            0x01 => {
+                                // Esc
+                                *control_flow = ControlFlow::Exit
                             }
+                            _ => {}
                         }
-                        let new_pos = renderer.camera_mut().pos()
-                            + renderer
-                                .camera_mut()
-                                .view_matrix()
-                                .to_homogeneous()
-                                .transpose()
-                                .fixed_slice::<3, 3>(0, 0)
-                                * camera_pos_diff
-                                * clock.elapsed().as_millis() as f32;
-                        renderer.camera_mut().set_pos(new_pos);
-                },
+                    }
+                    let new_pos = renderer.camera_mut().pos()
+                        + renderer
+                            .camera_mut()
+                            .view_matrix()
+                            .to_homogeneous()
+                            .transpose()
+                            .fixed_slice::<3, 3>(0, 0)
+                            * camera_pos_diff
+                            * clock.elapsed().as_millis() as f32;
+                    renderer.camera_mut().set_pos(new_pos);
+                }
                 _ => {}
-            }
+            },
             Event::MainEventsCleared => {
                 clock = std::time::Instant::now();
                 renderer.render_frame(&window.window);

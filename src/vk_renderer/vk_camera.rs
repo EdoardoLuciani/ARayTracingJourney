@@ -19,7 +19,7 @@ struct Uniform {
     camera_pos: Vector3<f32>,
     pad: f32,
     jitter: Vector2<f32>,
-    prev_jitter: Vector2<f32>
+    prev_jitter: Vector2<f32>,
 }
 
 pub struct VkCamera {

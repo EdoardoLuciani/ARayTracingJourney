@@ -8,11 +8,10 @@
 #include "ffx_a.h"
 
 layout (set = 0, binding = 0, r11f_g11f_b10f) uniform readonly image2D input_color;
-layout (set = 0, binding = 1, r32ui) uniform readonly uimage2D global_ao;
 
-layout (set = 0, binding = 2) uniform writeonly image2D out_color[];
+layout (set = 0, binding = 1) uniform writeonly image2D out_color[];
 
-layout (set = 0, binding = 3) uniform uniform_buffer {
+layout (set = 0, binding = 2) uniform uniform_buffer {
     uvec4 lpm_data[24];
 };
 
@@ -30,9 +29,6 @@ void main() {
     ivec2 global_coords = ivec2(gl_GlobalInvocationID.xy);
 
     vec3 color = imageLoad(input_color, global_coords).rgb;
-    //float ao = float(imageLoad(global_ao, global_coords).r) / 255.0;
-    //color *= ao;
-
     LpmFilter(color.r,color.g,color.b,false,LPM_CONFIG_709_709);
     color = rgb_to_srgb_approx(color);
 

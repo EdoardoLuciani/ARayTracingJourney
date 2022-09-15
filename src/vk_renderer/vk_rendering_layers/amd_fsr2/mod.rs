@@ -9,6 +9,7 @@ use nalgebra::*;
 use std::cell::RefCell;
 use std::ffi::c_void;
 use std::rc::Rc;
+use super::VkImagePrevState;
 
 pub struct AmdFsr2 {
     device: Rc<ash::Device>,
@@ -48,7 +49,9 @@ impl AmdFsr2 {
     ) -> Self {
         let mut context_description = unsafe {
             FfxFsr2ContextDescription {
-                flags: (FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE | FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_AUTO_EXPOSURE) as u32,
+                flags: (FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_HIGH_DYNAMIC_RANGE
+                    | FfxFsr2InitializationFlagBits_FFX_FSR2_ENABLE_AUTO_EXPOSURE)
+                    as u32,
                 maxRenderSize: FfxDimensions2D::default(),
                 displaySize: FfxDimensions2D::default(),
                 callbacks: std::mem::zeroed(),
@@ -109,7 +112,7 @@ impl AmdFsr2 {
             input_depth_image,
             input_depth_image_view,
             input_motion_vector_image,
-            input_motion_vector_image_view
+            input_motion_vector_image_view,
         );
 
         ret
@@ -142,34 +145,34 @@ impl AmdFsr2 {
 
             ffxFsr2ContextCreate(&mut self.context, &self.context_description);
         }
-            take_mut::take(&mut self.output_image, |image| {
-                self.allocator
-                    .as_ref()
-                    .borrow_mut()
-                    .get_allocator_mut()
-                    .destroy_image(image);
+        take_mut::take(&mut self.output_image, |image| {
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_image(image);
 
-                let image_ci = vk::ImageCreateInfo::builder()
-                    .image_type(vk::ImageType::TYPE_2D)
-                    .format(vk::Format::B10G11R11_UFLOAT_PACK32)
-                    .extent(vk::Extent3D {
-                        width: output_res.width,
-                        height: output_res.height,
-                        depth: 1,
-                    })
-                    .mip_levels(1)
-                    .array_layers(1)
-                    .samples(vk::SampleCountFlags::TYPE_1)
-                    .tiling(vk::ImageTiling::OPTIMAL)
-                    .usage(vk::ImageUsageFlags::STORAGE)
-                    .sharing_mode(vk::SharingMode::EXCLUSIVE)
-                    .initial_layout(vk::ImageLayout::UNDEFINED);
-                self.allocator
-                    .as_ref()
-                    .borrow_mut()
-                    .get_allocator_mut()
-                    .allocate_image(&image_ci, MemoryLocation::GpuOnly)
-            });
+            let image_ci = vk::ImageCreateInfo::builder()
+                .image_type(vk::ImageType::TYPE_2D)
+                .format(vk::Format::B10G11R11_UFLOAT_PACK32)
+                .extent(vk::Extent3D {
+                    width: output_res.width,
+                    height: output_res.height,
+                    depth: 1,
+                })
+                .mip_levels(1)
+                .array_layers(1)
+                .samples(vk::SampleCountFlags::TYPE_1)
+                .tiling(vk::ImageTiling::OPTIMAL)
+                .usage(vk::ImageUsageFlags::STORAGE)
+                .sharing_mode(vk::SharingMode::EXCLUSIVE)
+                .initial_layout(vk::ImageLayout::UNDEFINED);
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .allocate_image(&image_ci, MemoryLocation::GpuOnly)
+        });
 
         unsafe {
             self.device.destroy_image_view(self.output_image_view, None);
@@ -185,8 +188,7 @@ impl AmdFsr2 {
                     base_array_layer: 0,
                     layer_count: 1,
                 });
-            self.output_image_view =
-                self.device.create_image_view(&image_view_ci, None).unwrap();
+            self.output_image_view = self.device.create_image_view(&image_view_ci, None).unwrap();
         }
 
         self.input_color_image = input_color_image;
@@ -229,14 +231,16 @@ impl AmdFsr2 {
         camera_far: f32,
         camera_fovy: f32,
         reset: bool,
+        input_color_prev_state: VkImagePrevState,
+        input_motion_vector_prev_state: VkImagePrevState,
     ) {
         let image_memory_barriers = [
             vk::ImageMemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
+                .src_stage_mask(input_color_prev_state.src_stage)
+                .src_access_mask(input_color_prev_state.src_access)
                 .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                 .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
-                .old_layout(vk::ImageLayout::GENERAL)
+                .old_layout(input_color_prev_state.src_layout)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image(self.input_color_image)
                 .subresource_range(vk::ImageSubresourceRange {
@@ -248,11 +252,11 @@ impl AmdFsr2 {
                 })
                 .build(),
             vk::ImageMemoryBarrier2::builder()
-                .src_stage_mask(vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR)
-                .src_access_mask(vk::AccessFlags2::SHADER_WRITE)
+                .src_stage_mask(input_motion_vector_prev_state.src_stage)
+                .src_access_mask(input_motion_vector_prev_state.src_access)
                 .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
                 .dst_access_mask(vk::AccessFlags2::SHADER_SAMPLED_READ)
-                .old_layout(vk::ImageLayout::GENERAL)
+                .old_layout(input_motion_vector_prev_state.src_layout)
                 .new_layout(vk::ImageLayout::SHADER_READ_ONLY_OPTIMAL)
                 .image(self.input_motion_vector_image)
                 .subresource_range(vk::ImageSubresourceRange {
@@ -386,7 +390,14 @@ impl Drop for AmdFsr2 {
         unsafe {
             ffxFsr2ContextDestroy(&mut self.context);
             self.device.destroy_image_view(self.output_image_view, None);
-            self.allocator.as_ref().borrow_mut().get_allocator_mut().destroy_image(std::mem::replace(&mut self.output_image, std::mem::zeroed()))        
+            self.allocator
+                .as_ref()
+                .borrow_mut()
+                .get_allocator_mut()
+                .destroy_image(std::mem::replace(
+                    &mut self.output_image,
+                    std::mem::zeroed(),
+                ))
         };
     }
 }

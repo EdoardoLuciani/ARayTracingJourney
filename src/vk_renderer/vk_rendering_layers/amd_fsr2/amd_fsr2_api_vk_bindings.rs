@@ -15,10 +15,7 @@ pub type PFN_vkEnumerateDeviceExtensionProperties = ::std::option::Option<
 >;
 
 pub type PFN_vkGetInstanceProcAddr = ::std::option::Option<
-    unsafe extern "C" fn(
-        instance: vk::Instance,
-        pName: *const ::std::os::raw::c_char,
-    ) -> fn(),
+    unsafe extern "C" fn(instance: vk::Instance, pName: *const ::std::os::raw::c_char) -> fn(),
 >;
 
 #[doc = "< A bit indicating if the input color data provided is using a high-dynamic range."]
@@ -63,7 +60,8 @@ pub const FfxResourceStates_FFX_RESOURCE_STATE_GENERIC_READ: FfxResourceStates =
 #[doc = " An enumeration of resource states."]
 pub type FfxResourceStates = ::std::os::raw::c_int;
 #[doc = " Typedef for error codes returned from functions in the FidelityFX SDK."]
-pub type FfxErrorCode = i32;#[doc = "< The operation completed successfully."]
+pub type FfxErrorCode = i32;
+#[doc = "< The operation completed successfully."]
 pub const FFX_OK: FfxErrorCode = 0;
 #[doc = "< The operation failed due to an invalid pointer."]
 pub const FFX_ERROR_INVALID_POINTER: FfxErrorCode = -2147483648;
@@ -96,7 +94,6 @@ pub const FFX_ERROR_BACKEND_API_ERROR: FfxErrorCode = -2147483635;
 #[doc = "< The operation failed because there was not enough memory."]
 pub const FFX_ERROR_INSUFFICIENT_MEMORY: FfxErrorCode = -2147483634;
 #[doc = "< A pass which prepares input colors for subsequent use."]
-
 #[doc = " A typedef representing the graphics device."]
 pub type FfxDevice = *mut ::std::os::raw::c_void;
 #[doc = " A typedef representing a command list or command buffer."]
@@ -855,7 +852,6 @@ pub struct FfxFsr2GenerateReactiveDescription {
     #[doc = "< Flags to determine how to generate the reactive mask"]
     pub flags: u32,
 }
-
 
 extern "C" {
     #[doc = " Create a FidelityFX Super Resolution 2 context from the parameters"]

@@ -333,8 +333,6 @@ pub struct VkTonemap {
     presentation_resolution: vk::Extent2D,
     input_color_image: vk::Image,
     input_color_image_view: vk::ImageView,
-    input_ao_image: vk::Image,
-    input_ao_image_view: vk::ImageView,
     lpm_constant_buffer: SubAllocationData,
     output_images: Vec<vk::Image>,
     output_image_views: Vec<vk::ImageView>,
@@ -352,8 +350,6 @@ impl VkTonemap {
         shader_spirv_location: &Path,
         input_color_image: vk::Image,
         input_color_image_view: vk::ImageView,
-        input_ao_image: vk::Image,
-        input_ao_image_view: vk::ImageView,
         output_images: Vec<vk::Image>,
         output_image_views: Vec<vk::ImageView>,
     ) -> Self {
@@ -370,24 +366,17 @@ impl VkTonemap {
                 vk::DescriptorSetLayoutBinding::builder()
                     .binding(1)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .descriptor_count(1)
-                    .stage_flags(vk::ShaderStageFlags::COMPUTE)
-                    .build(),
-                vk::DescriptorSetLayoutBinding::builder()
-                    .binding(2)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                     .descriptor_count(output_images.len() as u32)
                     .stage_flags(vk::ShaderStageFlags::COMPUTE)
                     .build(),
                 vk::DescriptorSetLayoutBinding::builder()
-                    .binding(3)
+                    .binding(2)
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                     .descriptor_count(1)
                     .stage_flags(vk::ShaderStageFlags::COMPUTE)
                     .build(),
             ];
             let flags = [
-                vk::DescriptorBindingFlags::empty(),
                 vk::DescriptorBindingFlags::empty(),
                 vk::DescriptorBindingFlags::PARTIALLY_BOUND,
                 vk::DescriptorBindingFlags::empty(),
@@ -435,8 +424,6 @@ impl VkTonemap {
             presentation_resolution,
             input_color_image,
             input_color_image_view,
-            input_ao_image,
-            input_ao_image_view,
             lpm_constant_buffer,
             output_images,
             output_image_views,
@@ -454,16 +441,12 @@ impl VkTonemap {
         presentation_resolution: vk::Extent2D,
         input_color_image: vk::Image,
         input_color_image_view: vk::ImageView,
-        input_ao_image: vk::Image,
-        input_ao_image_view: vk::ImageView,
         output_images: Vec<vk::Image>,
         output_image_views: Vec<vk::ImageView>,
     ) {
         self.presentation_resolution = presentation_resolution;
         self.input_color_image = input_color_image;
         self.input_color_image_view = input_color_image_view;
-        self.input_ao_image = input_ao_image;
-        self.input_ao_image_view = input_ao_image_view;
         self.output_images = output_images;
         self.output_image_views = output_image_views;
         self.update_descriptor_set();
@@ -480,22 +463,6 @@ impl VkTonemap {
                     .old_layout(vk::ImageLayout::GENERAL)
                     .new_layout(vk::ImageLayout::GENERAL)
                     .image(self.input_color_image)
-                    .subresource_range(vk::ImageSubresourceRange {
-                        aspect_mask: vk::ImageAspectFlags::COLOR,
-                        base_mip_level: 0,
-                        level_count: 1,
-                        base_array_layer: 0,
-                        layer_count: 1,
-                    })
-                    .build(),
-                vk::ImageMemoryBarrier2::builder()
-                    .src_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-                    .src_access_mask(vk::AccessFlags2::SHADER_STORAGE_WRITE)
-                    .dst_stage_mask(vk::PipelineStageFlags2::COMPUTE_SHADER)
-                    .dst_access_mask(vk::AccessFlags2::SHADER_STORAGE_READ_KHR)
-                    .old_layout(vk::ImageLayout::GENERAL)
-                    .new_layout(vk::ImageLayout::GENERAL)
-                    .image(self.input_ao_image)
                     .subresource_range(vk::ImageSubresourceRange {
                         aspect_mask: vk::ImageAspectFlags::COLOR,
                         base_mip_level: 0,
@@ -561,11 +528,6 @@ impl VkTonemap {
                 .image_view(self.input_color_image_view)
                 .image_layout(vk::ImageLayout::GENERAL);
 
-            let input_ao = vk::DescriptorImageInfo::builder()
-                .sampler(vk::Sampler::null())
-                .image_view(self.input_ao_image_view)
-                .image_layout(vk::ImageLayout::GENERAL);
-
             let output_images = self
                 .output_image_views
                 .iter()
@@ -597,18 +559,11 @@ impl VkTonemap {
                     .dst_binding(1)
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
-                    .image_info(std::slice::from_ref(&input_ao))
-                    .build(),
-                vk::WriteDescriptorSet::builder()
-                    .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
-                    .dst_binding(2)
-                    .dst_array_element(0)
-                    .descriptor_type(vk::DescriptorType::STORAGE_IMAGE)
                     .image_info(&output_images)
                     .build(),
                 vk::WriteDescriptorSet::builder()
                     .dst_set(self.descriptor_set_allocation.get_descriptor_sets()[0])
-                    .dst_binding(3)
+                    .dst_binding(2)
                     .dst_array_element(0)
                     .descriptor_type(vk::DescriptorType::UNIFORM_BUFFER)
                     .buffer_info(std::slice::from_ref(&lpm_buffer_info))

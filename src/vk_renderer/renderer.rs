@@ -1,8 +1,10 @@
 use super::vk_allocator::VkAllocator;
 use super::vk_boot::vk_base;
 use super::vk_model::VkModel;
+use super::vk_rendering_layers::vk_combine::*;
 use super::vk_rendering_layers::vk_rt_lightning_shadows::VkRTLightningShadows;
 use super::vk_rendering_layers::vk_tonemap::VkTonemap;
+use super::vk_rendering_layers::VkImagePrevState;
 use super::vk_rt_descriptor_set::VkRTDescriptorSet;
 use super::vk_tlas_builder::VkTlasBuilder;
 use crate::vk_renderer::vk_blas_builder::VkBlasBuilder;
@@ -160,6 +162,7 @@ pub struct VulkanTempleRayTracedRenderer {
     renderer_settings: Settings,
     lightning_layer: VkRTLightningShadows,
     ao_layer: VkXeGtao,
+    combine_layer: VkCombine,
     amd_fsr2_layer: Option<AmdFsr2>,
     tonemap_layer: VkTonemap,
     frames_data: [FrameData; 3],
@@ -173,7 +176,7 @@ impl VulkanTempleRayTracedRenderer {
             raw_window_handle::RawWindowHandle,
             raw_window_handle::RawDisplayHandle,
         ),
-        renderer_settings: Settings
+        renderer_settings: Settings,
     ) -> Self {
         let mut physical_device_ray_tracing_pipeline =
             vk::PhysicalDeviceRayTracingPipelineFeaturesKHR::builder().ray_tracing_pipeline(true);
@@ -287,7 +290,9 @@ impl VulkanTempleRayTracedRenderer {
             device.begin_command_buffer(init_cb, &begin_info).unwrap();
         }
 
-        let rendering_resolution = renderer_settings.upscaling_quality.get_recommended_input_res(window_size);
+        let rendering_resolution = renderer_settings
+            .upscaling_quality
+            .get_recommended_input_res(window_size);
 
         let lightning_layer = VkRTLightningShadows::new(
             device.clone(),
@@ -320,30 +325,47 @@ impl VulkanTempleRayTracedRenderer {
             lightning_layer.get_output_normal_image_view(),
         );
 
-        let (amd_fsr2_layer, color_image, color_image_view) = match renderer_settings.upscaling_quality.is_native() {
-            true => {
-                (None, lightning_layer.get_color_output_image(), lightning_layer.get_color_output_image_view())
-            },
-            false => {
-                let amd_fsr2 = AmdFsr2::new(
-                    device.clone(),
-                    allocator.clone(),
-                    bvk.get_physical_device(),
-                    bvk.get_entry(),
-                    bvk.get_instance(),
-                    rendering_resolution,
-                    window_size,
-                    lightning_layer.get_color_output_image(),
-                    lightning_layer.get_color_output_image_view(),
-                    lightning_layer.get_output_depth_image(),
-                    lightning_layer.get_output_depth_image_view(),
-                    lightning_layer.get_output_motion_vector_image(),
-                    lightning_layer.get_output_motion_vector_image_view(),
-                );
-                let (output_image, output_image_view) = (amd_fsr2.get_output_image(), amd_fsr2.get_output_image_view());
-                (Some(amd_fsr2), output_image, output_image_view)
-            }
-        };
+        let combine_layer = VkCombine::new(
+            device.clone(),
+            allocator.clone(),
+            std::path::Path::new("assets//shaders-spirv"),
+            rendering_resolution,
+            lightning_layer.get_color_output_image(),
+            lightning_layer.get_color_output_image_view(),
+            ao_layer.output_ao_image(),
+            ao_layer.output_ao_image_view(),
+        );
+
+        let (amd_fsr2_layer, color_image, color_image_view) =
+            match renderer_settings.upscaling_quality.is_native() {
+                true => (
+                    None,
+                    combine_layer.get_output_image(),
+                    combine_layer.get_output_image_view(),
+                ),
+                false => {
+                    let amd_fsr2 = AmdFsr2::new(
+                        device.clone(),
+                        allocator.clone(),
+                        bvk.get_physical_device(),
+                        bvk.get_entry(),
+                        bvk.get_instance(),
+                        rendering_resolution,
+                        window_size,
+                        combine_layer.get_output_image(),
+                        combine_layer.get_output_image_view(),
+                        lightning_layer.get_output_depth_image(),
+                        lightning_layer.get_output_depth_image_view(),
+                        lightning_layer.get_output_motion_vector_image(),
+                        lightning_layer.get_output_motion_vector_image_view(),
+                    );
+                    let (output_image, output_image_view) = (
+                        amd_fsr2.get_output_image(),
+                        amd_fsr2.get_output_image_view(),
+                    );
+                    (Some(amd_fsr2), output_image, output_image_view)
+                }
+            };
 
         let tonemap_layer = VkTonemap::new(
             device.clone(),
@@ -352,8 +374,6 @@ impl VulkanTempleRayTracedRenderer {
             std::path::Path::new("assets//shaders-spirv"),
             color_image,
             color_image_view,
-            ao_layer.output_ao_image(),
-            ao_layer.output_ao_image_view(),
             bvk.get_swapchain_images().to_vec(),
             bvk.get_swapchain_image_views().to_vec(),
         );
@@ -391,6 +411,7 @@ impl VulkanTempleRayTracedRenderer {
             rt_descriptor_set,
             lightning_layer,
             ao_layer,
+            combine_layer,
             amd_fsr2_layer,
             tonemap_layer,
             frames_data,
@@ -436,12 +457,13 @@ impl VulkanTempleRayTracedRenderer {
 
         if let Some(amd_fsr2) = self.amd_fsr2_layer.as_mut() {
             let jitter = amd_fsr2.update_proj_jitter();
-            let rendering_resolution = self.renderer_settings.upscaling_quality.get_recommended_input_res(
-            vk::Extent2D {
-                width: window.inner_size().width,
-                height: window.inner_size().height
-            }
-            );
+            let rendering_resolution = self
+                .renderer_settings
+                .upscaling_quality
+                .get_recommended_input_res(vk::Extent2D {
+                    width: window.inner_size().width,
+                    height: window.inner_size().height,
+                });
             self.camera.set_pixel_jitter(jitter);
         }
         self.camera.update_host_buffer();
@@ -590,7 +612,10 @@ impl VulkanTempleRayTracedRenderer {
     }
 
     fn resize(&mut self, window_resolution: vk::Extent2D) {
-        let rendering_resolution = self.renderer_settings.upscaling_quality.get_recommended_input_res(window_resolution);
+        let rendering_resolution = self
+            .renderer_settings
+            .upscaling_quality
+            .get_recommended_input_res(window_resolution);
 
         unsafe {
             self.device.device_wait_idle().unwrap();
@@ -615,32 +640,35 @@ impl VulkanTempleRayTracedRenderer {
             self.lightning_layer.get_output_normal_image_view(),
         );
 
-        
+        self.combine_layer.resize(rendering_resolution, self.lightning_layer.get_color_output_image(), self.lightning_layer.get_color_output_image_view(), self.ao_layer.output_ao_image(), self.ao_layer.output_ao_image_view());
+
         let (color_image, color_image_view) = match self.amd_fsr2_layer.as_mut() {
             Some(amd_fsr2) => {
                 amd_fsr2.resize(
                     rendering_resolution,
                     window_resolution,
-                    self.lightning_layer.get_color_output_image(),
-                    self.lightning_layer.get_color_output_image_view(),
+                    self.combine_layer.get_output_image(),
+                    self.combine_layer.get_output_image_view(),
                     self.lightning_layer.get_output_depth_image(),
                     self.lightning_layer.get_output_depth_image_view(),
                     self.lightning_layer.get_output_motion_vector_image(),
                     self.lightning_layer.get_output_motion_vector_image_view(),
                 );
-                (amd_fsr2.get_output_image(), amd_fsr2.get_output_image_view())
+                (
+                    amd_fsr2.get_output_image(),
+                    amd_fsr2.get_output_image_view(),
+                )
             }
-            None => {
-                (self.lightning_layer.get_color_output_image(), self.lightning_layer.get_color_output_image_view())
-            }
+            None => (
+                self.combine_layer.get_output_image(),
+                self.combine_layer.get_output_image_view()
+            ),
         };
 
         self.tonemap_layer.resize(
             window_resolution,
             color_image,
             color_image_view,
-            self.ao_layer.output_ao_image(),
-            self.ao_layer.output_ao_image_view(),
             self.bvk.get_swapchain_images().to_vec(),
             self.bvk.get_swapchain_image_views().to_vec(),
         );
@@ -785,8 +813,34 @@ impl VulkanTempleRayTracedRenderer {
 
         self.ao_layer.compute_ao(cb);
 
+        self.combine_layer.combine(cb, VkImagePrevState {
+            src_stage: vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
+            src_access: vk::AccessFlags2::SHADER_STORAGE_WRITE,
+            src_layout: vk::ImageLayout::GENERAL,
+        }, VkImagePrevState {
+            src_stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+            src_access: vk::AccessFlags2::SHADER_STORAGE_WRITE,
+            src_layout: vk::ImageLayout::GENERAL,
+        });
+
         if let Some(amd_fsr2) = self.amd_fsr2_layer.as_mut() {
-            amd_fsr2.upscale(cb, self.camera.znear(), self.camera.zfar(), self.camera.fovy(), false);
+            amd_fsr2.upscale(
+                cb,
+                self.camera.znear(),
+                self.camera.zfar(),
+                self.camera.fovy(),
+                false,
+                VkImagePrevState {
+                    src_stage: vk::PipelineStageFlags2::COMPUTE_SHADER,
+                    src_access: vk::AccessFlags2::SHADER_STORAGE_READ | vk::AccessFlags2::SHADER_STORAGE_WRITE,
+                    src_layout: vk::ImageLayout::GENERAL,
+                },
+                VkImagePrevState {
+                    src_stage: vk::PipelineStageFlags2::RAY_TRACING_SHADER_KHR,
+                    src_access: vk::AccessFlags2::SHADER_STORAGE_WRITE,
+                    src_layout: vk::ImageLayout::GENERAL,
+                }
+            );
         }
 
         unsafe {

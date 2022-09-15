@@ -304,11 +304,15 @@ struct VkModelUniform {
 }
 
 impl VkModelUniform {
-    pub fn new(model_matrix: Matrix4<f32>, prev_model_matrix: Matrix4<f32>, model_trans_inv_matrix: Matrix4<f32>) -> Self {
+    pub fn new(
+        model_matrix: Matrix4<f32>,
+        prev_model_matrix: Matrix4<f32>,
+        model_trans_inv_matrix: Matrix4<f32>,
+    ) -> Self {
         Self {
             model_matrix,
             prev_model_matrix,
-            model_trans_inv_matrix
+            model_trans_inv_matrix,
         }
     }
 }
@@ -327,7 +331,11 @@ impl VkModel {
             allocator,
             model_path,
             model_bounding_sphere: Sphere::new(Vector3::zeros(), 0.0f32),
-            uniform: VkModelUniform::new(model_matrix, Matrix4::zeros(), model_matrix.try_inverse().unwrap()),
+            uniform: VkModelUniform::new(
+                model_matrix,
+                Matrix4::zeros(),
+                model_matrix.try_inverse().unwrap(),
+            ),
             model_matrix,
             state: Some(Box::new(Storage {})),
             model_changed_state: false,
@@ -383,7 +391,7 @@ impl VkModel {
     }
 
     pub fn get_transform_model_matrix(&self) -> vk::TransformMatrixKHR {
-        let row_matrix = self.model_matrix.fixed_slice::<3,4>(0, 0).transpose();
+        let row_matrix = self.model_matrix.fixed_slice::<3, 4>(0, 0).transpose();
         let matrix: [f32; 12] = row_matrix.data.as_slice().try_into().unwrap();
         vk::TransformMatrixKHR { matrix }
     }

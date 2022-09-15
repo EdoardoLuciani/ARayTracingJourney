@@ -132,7 +132,9 @@ impl Sphere {
             m_transform.column(0).magnitude_squared(),
             m_transform.column(1).magnitude_squared(),
             m_transform.column(2).magnitude_squared(),
-        ).max().sqrt();
+        )
+        .max()
+        .sqrt();
         Sphere {
             center: (m_transform * center).xyz(),
             radius: max_scale * self.radius,
